@@ -723,14 +723,63 @@ st.dataframe(fmt[show_cols], use_container_width=True, hide_index=True)
 # ------------------ TABELAS ------------------
 st.markdown("---")
 st.markdown('<div class="section">🧾 Detalhamento (linhas da base)</div>', unsafe_allow_html=True)
-det_cols = ["DATA","UNIDADE","VISTORIADOR","PLACA","ERRO","GRAVIDADE","ANALISTA","OBS"]
+
+# Base desta seção
 det = viewQ.copy()
+
+# -------- Filtros discretos (só para esta tabela) --------
+with st.expander("Filtros deste quadro (opcional)", expanded=False):
+    c1, c2, c3 = st.columns(3)
+    c4, c5, c6 = st.columns(3)
+
+    # Datas (limites deduzidos da própria base filtrada)
+    _d = pd.to_datetime(det["DATA"], errors="coerce").dt.date
+    _dmin, _dmax = (_d.min(), _d.max()) if _d.notna().any() else (date(2000,1,1), date(2000,1,1))
+    f_data = c1.date_input("Data (início e fim)", value=(_dmin, _dmax), min_value=_dmin, max_value=_dmax, format="DD/MM/YYYY")
+
+    # Texto livre para placa (contém, case-insensitive)
+    f_placa = c2.text_input("Placa (contém)", "")
+
+    # Demais filtros como multiselect (pré-selecionados com “todos”)
+    opts_erro       = sorted(det["ERRO"].dropna().unique().tolist())
+    opts_grav       = sorted(det["GRAVIDADE"].dropna().unique().tolist()) if "GRAVIDADE" in det.columns else []
+    opts_cidade     = sorted(det["UNIDADE"].dropna().unique().tolist()) if "UNIDADE" in det.columns else []
+    opts_vist       = sorted(det["VISTORIADOR"].dropna().unique().tolist()) if "VISTORIADOR" in det.columns else []
+    opts_analista   = sorted(det["ANALISTA"].dropna().unique().tolist()) if "ANALISTA" in det.columns else []
+
+    f_erros       = c3.multiselect("Erro", opts_erro, default=opts_erro)
+    f_grav        = c4.multiselect("Gravidade", opts_grav, default=opts_grav)
+    f_cidade      = c5.multiselect("Cidade / Unidade", opts_cidade, default=opts_cidade)
+    f_vist        = c6.multiselect("Vistoriador", opts_vist, default=opts_vist)
+    f_analista    = c6.multiselect("Analista", opts_analista, default=opts_analista, key="det_analista")
+
+# -------- Aplica filtros --------
+# Data
+if isinstance(f_data, tuple) and len(f_data) == 2:
+    dini, dfim = f_data
+    _d = pd.to_datetime(det["DATA"], errors="coerce").dt.date
+    det = det[_d.between(dini, dfim)]
+
+# Placa (contém)
+if f_placa.strip():
+    det = det[det["PLACA"].astype(str).str.contains(f_placa.strip(), case=False, na=False)]
+
+# Demais seleções (se vierem vazias, não filtram)
+if len(f_erros):    det = det[det["ERRO"].isin(f_erros)]
+if len(f_grav):     det = det[det["GRAVIDADE"].isin(f_grav)]      if "GRAVIDADE"  in det.columns else det
+if len(f_cidade):   det = det[det["UNIDADE"].isin(f_cidade)]      if "UNIDADE"    in det.columns else det
+if len(f_vist):     det = det[det["VISTORIADOR"].isin(f_vist)]    if "VISTORIADOR" in det.columns else det
+if len(f_analista): det = det[det["ANALISTA"].isin(f_analista)]   if "ANALISTA"   in det.columns else det
+
+# -------- Renderização --------
+det_cols = ["DATA","UNIDADE","VISTORIADOR","PLACA","ERRO","GRAVIDADE","ANALISTA","OBS"]
 for c in det_cols:
-    if c not in det.columns: det[c] = ""
-det = det[det_cols].sort_values("DATA")
+    if c not in det.columns:
+        det[c] = ""
+det = det[det_cols].sort_values(["DATA","UNIDADE","VISTORIADOR"])
+
 st.dataframe(det, use_container_width=True, hide_index=True)
-st.caption('<div class="table-note">* Dados filtrados pelo período, unidades e vistoriadores selecionados.</div>',
-           unsafe_allow_html=True)
+st.caption('<div class="table-note">* Filtros desta tabela são independentes dos filtros do topo do painel.</div>', unsafe_allow_html=True)
 
 st.markdown("---")
 st.markdown('<div class="section">📊 Comparativo por colaborador (mês atual x anterior)</div>', unsafe_allow_html=True)
@@ -805,4 +854,5 @@ else:
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>',
 
                unsafe_allow_html=True)
+
 
