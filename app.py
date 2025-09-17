@@ -562,82 +562,87 @@ with ex1:
         st.info("Sem dados para montar o Pareto no período/filtros atuais.")
     else:
         max_cats = min(30, n_err)
-        top_cats = st.slider(
-            "Categorias no Pareto",
-            min_value=3, max_value=max_cats, value=min(10, max_cats),
-            step=1, key="pareto_cats",
-        )
 
-        pareto = (
-            viewQ.groupby("ERRO", sort=False)["ERRO"]
-            .size()
-            .reset_index(name="QTD")
-            .sort_values("QTD", ascending=False)
-            .head(top_cats)
-            .reset_index(drop=True)
-        )
-
-        if pareto.empty:
-            st.info("Sem dados para montar o Pareto no período/filtros atuais.")
+        if max_cats < 1:
+            st.info("Sem categorias suficientes para montar o Pareto.")
         else:
-            pareto["ACUM"] = pareto["QTD"].cumsum()
-            total = pareto["QTD"].sum()
-            pareto["%ACUM"] = pareto["ACUM"] / total * 100
-
-            x_enc = alt.X(
-                "ERRO:N",
-                sort=alt.SortField(field="QTD", order="descending"),
-                axis=alt.Axis(labelAngle=0, labelLimit=180),
-                title="ERRO",
+            # <<< ajuste: slider começa em 1 e respeita o máximo disponível
+            top_default = min(10, max_cats)
+            top_cats = st.slider(
+                "Categorias no Pareto",
+                min_value=1, max_value=max_cats, value=top_default,
+                step=1, key=f"pareto_cats_{ref_year}{ref_month}",
             )
 
-            bars = alt.Chart(pareto).mark_bar().encode(
-                x=x_enc,
-                y=alt.Y("QTD:Q", title="QTD"),
-                tooltip=["ERRO", "QTD", alt.Tooltip("%ACUM:Q", format=".1f", title="% acumulado")],
-            )
-            bar_labels = alt.Chart(pareto).mark_text(dy=-6).encode(
-                x=x_enc, y="QTD:Q", text=alt.Text("QTD:Q", format=".0f")
-            )
-
-            line = alt.Chart(pareto).mark_line(point=True).encode(
-                x=x_enc,
-                y=alt.Y("%ACUM:Q", title="% Acumulado"),
-                color=alt.value("#b02300"),
-            )
-            line_labels = alt.Chart(pareto).mark_text(
-                dy=-8, baseline="bottom", color="#b02300", fontWeight="bold"
-            ).encode(
-                x=x_enc, y="%ACUM:Q", text=alt.Text("%ACUM:Q", format=".1f")
+            pareto = (
+                viewQ.groupby("ERRO", sort=False)["ERRO"]
+                .size()
+                .reset_index(name="QTD")
+                .sort_values("QTD", ascending=False)
+                .head(top_cats)
+                .reset_index(drop=True)
             )
 
-            chart_pareto = alt.layer(bars, bar_labels, line, line_labels) \
-                               .resolve_scale(y='independent') \
-                               .properties(height=360)
+            if pareto.empty:
+                st.info("Sem dados para montar o Pareto no período/filtros atuais.")
+            else:
+                pareto["ACUM"] = pareto["QTD"].cumsum()
+                total = pareto["QTD"].sum()
+                pareto["%ACUM"] = pareto["ACUM"] / total * 100
 
-            st.altair_chart(chart_pareto, use_container_width=True)
+                x_enc = alt.X(
+                    "ERRO:N",
+                    sort=alt.SortField(field="QTD", order="descending"),
+                    axis=alt.Axis(labelAngle=0, labelLimit=180),
+                    title="ERRO",
+                )
 
-            max_topN = int(len(pareto))
-            topN_sim = st.slider(
-                "Quantos erros do topo considerar?",
-                min_value=1, max_value=max_topN, value=min(8, max_topN),
-                key="pareto_topN",
-            )
-            reducao = st.slider(
-                "Redução esperada nesses erros (%)",
-                min_value=0, max_value=100, value=25,
-                key="pareto_reducao",
-            )
+                bars = alt.Chart(pareto).mark_bar().encode(
+                    x=x_enc,
+                    y=alt.Y("QTD:Q", title="QTD"),
+                    tooltip=["ERRO", "QTD", alt.Tooltip("%ACUM:Q", format=".1f", title="% acumulado")],
+                )
+                bar_labels = alt.Chart(pareto).mark_text(dy=-6).encode(
+                    x=x_enc, y="QTD:Q", text=alt.Text("QTD:Q", format=".0f")
+                )
 
-            idx = min(topN_sim, max_topN) - 1
-            frac = float(pareto["%ACUM"].iloc[idx]) / 100.0
-            queda_total = frac * (reducao / 100.0) * 100.0
+                line = alt.Chart(pareto).mark_line(point=True).encode(
+                    x=x_enc,
+                    y=alt.Y("%ACUM:Q", title="% Acumulado"),
+                    color=alt.value("#b02300"),
+                )
+                line_labels = alt.Chart(pareto).mark_text(
+                    dy=-8, baseline="bottom", color="#b02300", fontWeight="bold"
+                ).encode(
+                    x=x_enc, y="%ACUM:Q", text=alt.Text("%ACUM:Q", format=".1f")
+                )
 
-            st.info(
-                f"Os **Top {topN_sim}** explicam **{frac*100:.1f}%** do total. "
-                f"Se você reduzir esses erros em **{reducao}%**, "
-                f"o total cai cerca de **{queda_total:.1f}%**."
-            )
+                chart_pareto = alt.layer(bars, bar_labels, line, line_labels)\
+                                   .resolve_scale(y='independent')\
+                                   .properties(height=360)
+                st.altair_chart(chart_pareto, use_container_width=True)
+
+                max_topN = int(len(pareto))
+                topN_sim = st.slider(
+                    "Quantos erros do topo considerar?",
+                    min_value=1, max_value=max_topN, value=min(8, max_topN),
+                    key=f"pareto_topN_{ref_year}{ref_month}",
+                )
+                reducao = st.slider(
+                    "Redução esperada nesses erros (%)",
+                    min_value=0, max_value=100, value=25,
+                    key=f"pareto_reducao_{ref_year}{ref_month}",
+                )
+
+                idx = min(topN_sim, max_topN) - 1
+                frac = float(pareto["%ACUM"].iloc[idx]) / 100.0
+                queda_total = frac * (reducao / 100.0) * 100.0
+
+                st.info(
+                    f"Os **Top {topN_sim}** explicam **{frac*100:.1f}%** do total. "
+                    f"Se você reduzir esses erros em **{reducao}%**, "
+                    f"o total cai cerca de **{queda_total:.1f}%**."
+                )
 
 with ex2:
     st.markdown('<div class="section">🗺️ Heatmap Cidade × Gravidade</div>', unsafe_allow_html=True)
@@ -854,5 +859,6 @@ else:
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>',
 
                unsafe_allow_html=True)
+
 
 
