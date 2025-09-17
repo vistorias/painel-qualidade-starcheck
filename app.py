@@ -316,17 +316,29 @@ dfP = pd.concat(dp_all, ignore_index=True) if dp_all else pd.DataFrame(columns=[
 if "EMPRESA" in dfQ.columns:
     dfQ = dfQ[dfQ["EMPRESA"] == "STARCHECK"].copy()
 
-datas_validas_q = sorted(pd.to_datetime(dfQ["DATA"], errors="coerce").dropna().dt.date.unique())
-s_all_dates = pd.to_datetime(dfQ["DATA"], errors="coerce").dt.date
-if not datas_validas_q:
+# meses únicos (YYYY-MM) a partir da coluna DATA
+s_all_dt = pd.to_datetime(dfQ["DATA"], errors="coerce")
+ym_all = (
+    s_all_dt.dt.to_period("M")
+    .dropna()
+    .astype(str)              # ex.: "2025-09"
+    .unique()
+    .tolist()
+)
+ym_all = sorted(ym_all)
+
+if not ym_all:
     st.error("Qualidade sem colunas de Data válidas."); st.stop()
 
-labels = [f"{d.month:02d}/{d.year}" for d in sorted(datas_validas_q)]
-sel_mes = st.selectbox("Mês de referência", options=labels, index=len(labels)-1)
-mm_sel, yy_sel = sel_mes.split("/")
-ref_year, ref_month = int(yy_sel), int(mm_sel)
+# mapeia para "MM/YYYY" para exibição
+label_map = {f"{m[5:]}/{m[:4]}": m for m in ym_all}
+sel_label = st.selectbox("Mês de referência", options=list(label_map.keys()), index=len(ym_all)-1)
+ym_sel = label_map[sel_label]
+ref_year, ref_month = int(ym_sel[:4]), int(ym_sel[5:7])
 
-mask_mes = s_all_dates.map(lambda d: isinstance(d, date) and d.year == ref_year and d.month == ref_month)
+# máscara do mês escolhido
+mask_mes = (s_all_dt.dt.year.eq(ref_year) & s_all_dt.dt.month.eq(ref_month))
+
 dfQ_mes = dfQ[mask_mes].copy()
 
 s_mes_dates = pd.to_datetime(dfQ_mes["DATA"], errors="coerce").dt.date
@@ -793,3 +805,4 @@ else:
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>',
 
                unsafe_allow_html=True)
+
