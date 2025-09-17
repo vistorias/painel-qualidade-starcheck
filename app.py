@@ -249,21 +249,25 @@ def read_prod_month(month_sheet_id: str) -> Tuple[pd.DataFrame, str]:
 
 
 # ------------------ CARREGA INDEX ------------------
-st.caption(f"Service account em uso: **{SA_EMAIL}**")
-show_tech = st.toggle("Mostrar detalhes técnicos de conexão", value=False)
+# Oculto no app publicado
+show_tech = False
 
+# Ler índices e usar automaticamente todos os meses ATIVOS
 idx_q = read_index(QUAL_INDEX_ID)
-if "ATIVO" in idx_q.columns: idx_q = idx_q[idx_q["ATIVO"].map(_yes)].copy()
-meses_q = sorted([str(m).strip() for m in idx_q["MÊS"] if str(m).strip()])
-sel_meses = st.multiselect("Meses (Qualidade)", meses_q, default=meses_q)
+if "ATIVO" in idx_q.columns:
+    idx_q = idx_q[idx_q["ATIVO"].map(_yes)].copy()
+sel_meses = sorted([str(m).strip() for m in idx_q["MÊS"] if str(m).strip()])  # usa todos
 
 idx_p = read_index(PROD_INDEX_ID)
-if "ATIVO" in idx_p.columns: idx_p = idx_p[idx_p["ATIVO"].map(_yes)].copy()
-meses_p = sorted([str(m).strip() for m in idx_p["MÊS"] if str(m).strip()])
-sel_meses_p = st.multiselect("Meses (Produção)", meses_p, default=meses_p)
+if "ATIVO" in idx_p.columns:
+    idx_p = idx_p[idx_p["ATIVO"].map(_yes)].copy()
+sel_meses_p = sorted([str(m).strip() for m in idx_p["MÊS"] if str(m).strip()])  # usa todos
 
-if sel_meses:   idx_q = idx_q[idx_q["MÊS"].isin(sel_meses)]
-if sel_meses_p: idx_p = idx_p[idx_p["MÊS"].isin(sel_meses_p)]
+# Aplica (sem UI)
+if sel_meses:
+    idx_q = idx_q[idx_q["MÊS"].isin(sel_meses)]
+if sel_meses_p:
+    idx_p = idx_p[idx_p["MÊS"].isin(sel_meses_p)]
 
 dq_all, ok_q, er_q = [], [], []
 for _, r in idx_q.iterrows():
@@ -787,4 +791,5 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>',
+
                unsafe_allow_html=True)
