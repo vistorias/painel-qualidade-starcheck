@@ -14,6 +14,7 @@ import altair as alt
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from dateutil.relativedelta import relativedelta
 
 # Drive API (fallback XLSX)
 from google.oauth2 import service_account as gcreds
@@ -787,16 +788,33 @@ st.dataframe(det, use_container_width=True, hide_index=True)
 st.caption('<div class="table-note">* Filtros desta tabela são independentes dos filtros do topo do painel.</div>', unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown('<div class="section">📊 Comparativo por colaborador (mês atual x anterior)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section">📊 Comparativo por colaborador — período atual x mesmo período do mês anterior</div>', unsafe_allow_html=True)
 
-dfQ["__DT__"] = pd.to_datetime(dfQ["DATA"], errors="coerce")
-dfQ["YM"] = dfQ["__DT__"].dt.strftime("%Y-%m")
-ym_ref = f"{ref_year}-{ref_month:02d}"
-ym_prev = f"{ref_year-1}-12" if ref_month == 1 else f"{ref_year}-{ref_month-1:02d}"
+# Período atual (já aplicado em viewQ)
+periodo_atual_ini, periodo_atual_fim = start_d, end_d
 
-cur = dfQ[dfQ["YM"] == ym_ref].groupby("VISTORIADOR")["ERRO"].size().reset_index(name="ERROS_ATUAL")
-prev = dfQ[dfQ["YM"] == ym_prev].groupby("VISTORIADOR")["ERRO"].size().reset_index(name="ERROS_ANT")
+# Mesmo intervalo do mês anterior
+prev_ini = (pd.Timestamp(periodo_atual_ini) - relativedelta(months=1)).date()
+prev_fim = (pd.Timestamp(periodo_atual_fim) - relativedelta(months=1)).date()
 
+# Base do mês anterior — parte de dfQ (antes de cortar para o mês corrente),
+# e aplica os MESMOS filtros de Unidades e Vistoriadores usados em viewQ
+dfQ["_DT_"] = pd.to_datetime(dfQ["DATA"], errors="coerce").dt.date
+mask_prev = dfQ["_DT_"].between(prev_ini, prev_fim)
+
+prev_base = dfQ[mask_prev].copy()
+if "UNIDADE" in prev_base.columns and len(f_unids):
+    prev_base = prev_base[prev_base["UNIDADE"].isin([_upper(u) for u in f_unids])]
+if "VISTORIADOR" in prev_base.columns and len(f_vists):
+    prev_base = prev_base[prev_base["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+
+# Agregações: período atual usa viewQ; período anterior usa prev_base
+cur = (viewQ.groupby("VISTORIADOR", dropna=False)["ERRO"]
+       .size().reset_index(name="ERROS_ATUAL"))
+prev = (prev_base.groupby("VISTORIADOR", dropna=False)["ERRO"]
+        .size().reset_index(name="ERROS_ANT"))
+
+# Junta, calcula Δ e var%
 tab = cur.merge(prev, on="VISTORIADOR", how="outer").fillna(0)
 tab["Δ"] = tab["ERROS_ATUAL"] - tab["ERROS_ANT"]
 tab["VAR_%"] = np.where(tab["ERROS_ANT"] > 0, (tab["Δ"] / tab["ERROS_ANT"]) * 100, np.nan)
@@ -807,8 +825,15 @@ def _status(delta):
     return "➡️ Igual"
 
 tab["Status"] = tab["Δ"].map(_status)
+
+# Formatações bonitinhas
 tab_fmt = tab.copy()
 tab_fmt["VAR_%"] = tab_fmt["VAR_%"].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ","))
+
+st.caption(
+    f"Período atual: **{periodo_atual_ini:%d/%m/%Y} – {periodo_atual_fim:%d/%m/%Y}**  •  "
+    f"Período anterior: **{prev_ini:%d/%m/%Y} – {prev_fim:%d/%m/%Y}**"
+)
 
 st.dataframe(
     tab_fmt.sort_values("ERROS_ATUAL", ascending=False)[
@@ -859,6 +884,7 @@ else:
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>',
 
                unsafe_allow_html=True)
+
 
 
 
