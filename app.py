@@ -36,6 +36,11 @@ st.markdown(
 .section{font-size:18px;font-weight:800;margin:22px 0 8px}
 .small{color:#666;font-size:13px}
 .table-note{margin-top:8px;color:#666;font-size:12px}
+/* NOVO: badges de tendência nos cards */
+.delta{margin-top:6px;font-size:12px;font-weight:700;display:inline-block;padding:4px 8px;border-radius:999px}
+.delta.good{background:#e8f7ee;color:#18794e}
+.delta.bad{background:#fdebec;color:#b42318}
+.delta.neutral{background:#f1f1f3;color:#555}
 </style>
 """,
     unsafe_allow_html=True,
@@ -228,10 +233,10 @@ def read_quality_month(month_id: str) -> Tuple[pd.DataFrame, str]:
         if need not in dq.columns:
             dq[need] = ""
 
-    # -------- NOVO: preserva timestamp e mantém DATA como date --------
+    # NOVO: preserva timestamp original e mantem DATA como date
     if "DATA" in dq.columns:
-        dq["DATA_TS"] = pd.to_datetime(dq["DATA"], errors="coerce")   # pode ter hora
-        dq["DATA"] = dq["DATA"].apply(parse_date_any)                 # somente date
+        dq["DATA_TS"] = pd.to_datetime(dq["DATA"], errors="coerce")  # pode ter hora
+        dq["DATA"] = dq["DATA"].apply(parse_date_any)                # apenas date
     else:
         dq["DATA_TS"] = pd.NaT
 
@@ -448,13 +453,53 @@ else:
     viewP = dfP.copy()
 
 
-# ------------------ KPIs ------------------
+# ------------------ KPIs (com tendência da marca) ------------------
 grav_gg = {"GRAVE", "GRAVISSIMO", "GRAVÍSSIMO"}
+
+# Base atual (já filtrada)
 total_erros = int(len(viewQ))
 total_gg = int(viewQ["GRAVIDADE"].isin(grav_gg).sum()) if "GRAVIDADE" in viewQ.columns else 0
 vist_avaliados = int(viewQ["VISTORIADOR"].nunique()) if "VISTORIADOR" in viewQ.columns else 0
 media_por_vist = (total_erros / vist_avaliados) if vist_avaliados else 0
 
+# Produção para taxa bruta
+total_vist_brutas = int(len(viewP)) if not viewP.empty else 0
+taxa_geral = (total_erros / total_vist_brutas * 100) if total_vist_brutas else np.nan
+taxa_geral_str = "—" if np.isnan(taxa_geral) else f"{taxa_geral:.1f}%".replace(".", ",")
+
+# Tendência da marca: mesmo período do mês anterior com os mesmos filtros
+periodo_atual_ini, periodo_atual_fim = start_d, end_d
+prev_ini = (pd.Timestamp(periodo_atual_ini) - relativedelta(months=1)).date()
+prev_fim = (pd.Timestamp(periodo_atual_fim) - relativedelta(months=1)).date()
+
+df_prev = dfQ.copy()
+dt_prev = pd.to_datetime(df_prev["DATA"], errors="coerce").dt.date
+df_prev = df_prev[dt_prev.between(prev_ini, prev_fim)].copy()
+if "UNIDADE" in df_prev.columns and len(f_unids):
+    df_prev = df_prev[df_prev["UNIDADE"].isin([_upper(u) for u in f_unids])]
+if "VISTORIADOR" in df_prev.columns and len(f_vists):
+    df_prev = df_prev[df_prev["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+
+prev_total_erros = int(len(df_prev))
+prev_total_gg = int(df_prev["GRAVIDADE"].isin(grav_gg).sum()) if "GRAVIDADE" in df_prev.columns else 0
+
+def _delta_props(cur: int, prev: int):
+    if prev > 0:
+        pct = (cur - prev) / prev * 100.0
+        pct_str = f"{pct:+.1f}%".replace(".", ",")
+    else:
+        pct_str = "—"
+        pct = 0.0
+    if cur < prev:
+        return pct_str, "good", "Melhorou"
+    if cur > prev:
+        return pct_str, "bad", "Piorou"
+    return pct_str, "neutral", "Igual"
+
+delta_tot_str, delta_tot_cls, delta_tot_lbl = _delta_props(total_erros, prev_total_erros)
+delta_gg_str,  delta_gg_cls,  delta_gg_lbl  = _delta_props(total_gg,   prev_total_gg)
+
+# Vistoriadores com >=5 GG (sem tendência)
 if "GRAVIDADE" in viewQ.columns:
     gg_by_vist = (
         viewQ[viewQ["GRAVIDADE"].isin(grav_gg)]
@@ -464,22 +509,36 @@ if "GRAVIDADE" in viewQ.columns:
 else:
     vist_5gg = 0
 
-total_vist_brutas = int(len(viewP)) if not viewP.empty else 0
-taxa_geral = (total_erros / total_vist_brutas * 100) if total_vist_brutas else np.nan
-taxa_geral_str = "—" if np.isnan(taxa_geral) else f"{taxa_geral:.1f}%".replace(".", ",")
-
-cards = [
-    ("Total de erros (período)", f"{total_erros:,}".replace(",", ".")),
-    ("Vistoriadores com ≥5 erros GG", f"{vist_5gg:,}".replace(",", ".")),
-    ("Erros Grave+Gravíssimo", f"{total_gg:,}".replace(",", ".")),
-    ("Vistoriadores avaliados", f"{vist_avaliados:,}".replace(",", ".")),
-    ("Média de erros / vistoriador", f"{media_por_vist:.1f}".replace(".", ",")),
-    ("Taxa de erro (bruta)", taxa_geral_str),
-]
-st.markdown(
-    '<div class="card-wrap">' + "".join([f"<div class='card'><h4>{t}</h4><h2>{v}</h2></div>" for t, v in cards]) + "</div>",
-    unsafe_allow_html=True,
+# Render cards com badges
+cards_html = []
+cards_html.append(
+    f"<div class='card'><h4>Total de erros (período)</h4>"
+    f"<h2>{str(total_erros).replace(',', '.')}</h2>"
+    f"<div class='delta {delta_tot_cls}'>{delta_tot_str} · {delta_tot_lbl}</div></div>"
 )
+cards_html.append(
+    f"<div class='card'><h4>Vistoriadores com ≥5 erros GG</h4>"
+    f"<h2>{str(vist_5gg).replace(',', '.')}</h2></div>"
+)
+cards_html.append(
+    f"<div class='card'><h4>Erros Grave+Gravíssimo</h4>"
+    f"<h2>{str(total_gg).replace(',', '.')}</h2>"
+    f"<div class='delta {delta_gg_cls}'>{delta_gg_str} · {delta_gg_lbl}</div></div>"
+)
+cards_html.append(
+    f"<div class='card'><h4>Vistoriadores avaliados</h4>"
+    f"<h2>{str(vist_avaliados).replace(',', '.')}</h2></div>"
+)
+cards_html.append(
+    f"<div class='card'><h4>Média de erros / vistoriador</h4>"
+    f"<h2>{media_por_vist:.1f}".replace(".", ",") + "</h2></div>"
+)
+cards_html.append(
+    f"<div class='card'><h4>Taxa de erro (bruta)</h4>"
+    f"<h2>{taxa_geral_str}</h2></div>"
+)
+
+st.markdown("<div class='card-wrap'>" + "".join(cards_html) + "</div>", unsafe_allow_html=True)
 
 
 # ------------------ HOJE x ONTEM (ATÉ AGORA) ------------------
@@ -497,35 +556,27 @@ today_local = now_local.date()
 yesterday_local = (now_local - pd.Timedelta(days=1)).date()
 
 def _as_naive_ts(series_like):
-    """Converte para pandas datetime e remove timezone se houver."""
     ts = pd.to_datetime(series_like, errors="coerce")
     try:
-        # se já tem tz, remove
         if getattr(ts.dt, "tz", None) is not None:
             try:
                 ts = ts.dt.tz_convert(None)
             except Exception:
                 ts = ts.dt.tz_localize(None)
     except Exception:
-        # quando ts é escalar/NaT não tem .dt
         pass
     return ts
 
 def _as_naive_cutoff(dt_like):
-    """Gera um Timestamp sem timezone (naive) a partir de um datetime."""
     ts = pd.Timestamp(dt_like).replace(second=0, microsecond=0)
     if ts.tz is not None:
         ts = ts.tz_localize(None)
     return ts
 
-# Só ativa se o período selecionado for exatamente o dia de hoje
 if start_d == end_d == today_local:
-    # Base HOJE (com os mesmos filtros aplicados em viewQ)
     df_today = viewQ.copy()
     if "DATA_TS" not in df_today.columns:
         df_today["DATA_TS"] = pd.to_datetime(df_today["DATA"], errors="coerce")
-
-    # série com timezone removido (se existir)
     ts_today = _as_naive_ts(df_today["DATA_TS"])
     have_time_today = ts_today.dt.hour.notna().any()
 
@@ -534,9 +585,8 @@ if start_d == end_d == today_local:
         mask_today_now = (ts_today <= cutoff_today)
         df_today_now = df_today[mask_today_now]
     else:
-        df_today_now = df_today  # sem hora -> usa dia inteiro
+        df_today_now = df_today
 
-    # Base de ONTEM (mesmos filtros de topo)
     df_all = dfQ.copy()
     mask_yesterday = pd.to_datetime(df_all["DATA"], errors="coerce").dt.date.eq(yesterday_local)
     df_yest = df_all[mask_yesterday].copy()
@@ -547,7 +597,6 @@ if start_d == end_d == today_local:
 
     if "DATA_TS" not in df_yest.columns:
         df_yest["DATA_TS"] = pd.to_datetime(df_yest["DATA"], errors="coerce")
-
     ts_yest = _as_naive_ts(df_yest["DATA_TS"])
     have_time_yest = ts_yest.dt.hour.notna().any()
 
@@ -555,14 +604,12 @@ if start_d == end_d == today_local:
         cutoff_yest = _as_naive_cutoff(
             now_local.replace(year=yesterday_local.year, month=yesterday_local.month, day=yesterday_local.day)
         )
-        mask_yest_now = (ts_yest <= cutoff_yest)
-        df_yest_now = df_yest[mask_yest_now]
+        df_yest_now = df_yest[ts_yest <= cutoff_yest]
         note_text = "Comparando até a mesma hora (base com horário)."
     else:
         df_yest_now = df_yest
         note_text = "Sem horário na base — comparando o dia inteiro."
 
-    # Contagens e métricas
     erros_hoje_ate_agora = int(len(df_today_now))
     erros_ontem_mesma_hora = int(len(df_yest_now))
     delta = erros_hoje_ate_agora - erros_ontem_mesma_hora
@@ -576,6 +623,7 @@ if start_d == end_d == today_local:
     st.caption(f"<span class='small'>{note_text}</span>", unsafe_allow_html=True)
 else:
     st.info("Para ver o comparativo HOJE x ONTEM, selecione o **dia atual** no filtro de período.")
+
 
 # ------------------ GRÁFICOS ------------------
 def bar_with_labels(df, x_col, y_col, x_title="", y_title="QTD", height=320):
@@ -863,7 +911,7 @@ mtd = dfQ[mask_mtd].copy()
 if "UNIDADE" in mtd.columns and len(f_unids):
     mtd = mtd[mtd["UNIDADE"].isin([_upper(u) for u in f_unids])]
 if "VISTORIADOR" in mtd.columns and len(f_vists):
-    mtd = mtd[mtd["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+    mtd = mtd[mtd["VISTORIADOR"].isin([_upper(v) for u in f_vists])]
 
 erros_mtd = (mtd.groupby("VISTORIADOR", dropna=False)["ERRO"]
              .size().reset_index(name="ERROS_MTD"))
@@ -1047,4 +1095,3 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
-
