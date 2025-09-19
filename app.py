@@ -485,7 +485,7 @@ st.markdown(
 # ------------------ HOJE x ONTEM (ATÉ AGORA) ------------------
 st.markdown('<div class="section">⏱️ Hoje vs Ontem (até agora)</div>', unsafe_allow_html=True)
 
-# Timezone local
+# Timezone local (opcional)
 try:
     from zoneinfo import ZoneInfo
     tz = ZoneInfo("America/Fortaleza")
@@ -496,21 +496,47 @@ now_local = datetime.now(tz) if tz else datetime.now()
 today_local = now_local.date()
 yesterday_local = (now_local - pd.Timedelta(days=1)).date()
 
+def _as_naive_ts(series_like):
+    """Converte para pandas datetime e remove timezone se houver."""
+    ts = pd.to_datetime(series_like, errors="coerce")
+    try:
+        # se já tem tz, remove
+        if getattr(ts.dt, "tz", None) is not None:
+            try:
+                ts = ts.dt.tz_convert(None)
+            except Exception:
+                ts = ts.dt.tz_localize(None)
+    except Exception:
+        # quando ts é escalar/NaT não tem .dt
+        pass
+    return ts
+
+def _as_naive_cutoff(dt_like):
+    """Gera um Timestamp sem timezone (naive) a partir de um datetime."""
+    ts = pd.Timestamp(dt_like).replace(second=0, microsecond=0)
+    if ts.tz is not None:
+        ts = ts.tz_localize(None)
+    return ts
+
 # Só ativa se o período selecionado for exatamente o dia de hoje
 if start_d == end_d == today_local:
+    # Base HOJE (com os mesmos filtros aplicados em viewQ)
     df_today = viewQ.copy()
     if "DATA_TS" not in df_today.columns:
-        df_today["DATA_TS"] = pd.to_datetime(df_today["DATA"], errors="coerce")  # fallback sem hora
+        df_today["DATA_TS"] = pd.to_datetime(df_today["DATA"], errors="coerce")
 
-    have_time_today = df_today["DATA_TS"].dt.hour.notna().any()
+    # série com timezone removido (se existir)
+    ts_today = _as_naive_ts(df_today["DATA_TS"])
+    have_time_today = ts_today.dt.hour.notna().any()
+
+    cutoff_today = _as_naive_cutoff(now_local)
     if have_time_today:
-        cutoff_today = now_local.replace(second=0, microsecond=0)
-        mask_today_now = (pd.to_datetime(df_today["DATA_TS"], errors="coerce") <= cutoff_today)
+        mask_today_now = (ts_today <= cutoff_today)
         df_today_now = df_today[mask_today_now]
     else:
-        df_today_now = df_today  # sem hora -> dia inteiro
+        df_today_now = df_today  # sem hora -> usa dia inteiro
 
-    # Base de ontem com mesmos filtros de topo
+    # Base de ONTEM (mesmos filtros de topo)
     df_all = dfQ.copy()
     mask_yesterday = pd.to_datetime(df_all["DATA"], errors="coerce").dt.date.eq(yesterday_local)
     df_yest = df_all[mask_yesterday].copy()
@@ -522,19 +548,21 @@ if start_d == end_d == today_local:
     if "DATA_TS" not in df_yest.columns:
         df_yest["DATA_TS"] = pd.to_datetime(df_yest["DATA"], errors="coerce")
 
-    have_time_yest = df_yest["DATA_TS"].dt.hour.notna().any()
+    ts_yest = _as_naive_ts(df_yest["DATA_TS"])
+    have_time_yest = ts_yest.dt.hour.notna().any()
+
     if have_time_today and have_time_yest:
-        cutoff_yest = now_local.replace(
-            year=yesterday_local.year, month=yesterday_local.month, day=yesterday_local.day,
-            second=0, microsecond=0
+        cutoff_yest = _as_naive_cutoff(
+            now_local.replace(year=yesterday_local.year, month=yesterday_local.month, day=yesterday_local.day)
         )
-        mask_yest_now = (pd.to_datetime(df_yest["DATA_TS"], errors="coerce") <= cutoff_yest)
+        mask_yest_now = (ts_yest <= cutoff_yest)
         df_yest_now = df_yest[mask_yest_now]
         note_text = "Comparando até a mesma hora (base com horário)."
     else:
         df_yest_now = df_yest
         note_text = "Sem horário na base — comparando o dia inteiro."
 
+    # Contagens e métricas
     erros_hoje_ate_agora = int(len(df_today_now))
     erros_ontem_mesma_hora = int(len(df_yest_now))
     delta = erros_hoje_ate_agora - erros_ontem_mesma_hora
@@ -548,7 +576,6 @@ if start_d == end_d == today_local:
     st.caption(f"<span class='small'>{note_text}</span>", unsafe_allow_html=True)
 else:
     st.info("Para ver o comparativo HOJE x ONTEM, selecione o **dia atual** no filtro de período.")
-
 
 # ------------------ GRÁFICOS ------------------
 def bar_with_labels(df, x_col, y_col, x_title="", y_title="QTD", height=320):
@@ -1020,3 +1047,4 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
