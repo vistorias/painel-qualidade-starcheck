@@ -228,7 +228,13 @@ def read_quality_month(month_id: str) -> Tuple[pd.DataFrame, str]:
         if need not in dq.columns:
             dq[need] = ""
 
-    dq["DATA"] = dq["DATA"].apply(parse_date_any)
+    # -------- NOVO: preserva timestamp e mantém DATA como date --------
+    if "DATA" in dq.columns:
+        dq["DATA_TS"] = pd.to_datetime(dq["DATA"], errors="coerce")   # pode ter hora
+        dq["DATA"] = dq["DATA"].apply(parse_date_any)                 # somente date
+    else:
+        dq["DATA_TS"] = pd.NaT
+
     for c in ["VISTORIADOR","UNIDADE","ERRO","GRAVIDADE","ANALISTA","EMPRESA","PLACA"]:
         dq[c] = dq[c].astype(str).map(_upper)
 
@@ -474,6 +480,74 @@ st.markdown(
     '<div class="card-wrap">' + "".join([f"<div class='card'><h4>{t}</h4><h2>{v}</h2></div>" for t, v in cards]) + "</div>",
     unsafe_allow_html=True,
 )
+
+
+# ------------------ HOJE x ONTEM (ATÉ AGORA) ------------------
+st.markdown('<div class="section">⏱️ Hoje vs Ontem (até agora)</div>', unsafe_allow_html=True)
+
+# Timezone local
+try:
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("America/Fortaleza")
+except Exception:
+    tz = None
+
+now_local = datetime.now(tz) if tz else datetime.now()
+today_local = now_local.date()
+yesterday_local = (now_local - pd.Timedelta(days=1)).date()
+
+# Só ativa se o período selecionado for exatamente o dia de hoje
+if start_d == end_d == today_local:
+    df_today = viewQ.copy()
+    if "DATA_TS" not in df_today.columns:
+        df_today["DATA_TS"] = pd.to_datetime(df_today["DATA"], errors="coerce")  # fallback sem hora
+
+    have_time_today = df_today["DATA_TS"].dt.hour.notna().any()
+    if have_time_today:
+        cutoff_today = now_local.replace(second=0, microsecond=0)
+        mask_today_now = (pd.to_datetime(df_today["DATA_TS"], errors="coerce") <= cutoff_today)
+        df_today_now = df_today[mask_today_now]
+    else:
+        df_today_now = df_today  # sem hora -> dia inteiro
+
+    # Base de ontem com mesmos filtros de topo
+    df_all = dfQ.copy()
+    mask_yesterday = pd.to_datetime(df_all["DATA"], errors="coerce").dt.date.eq(yesterday_local)
+    df_yest = df_all[mask_yesterday].copy()
+    if len(f_unids) and "UNIDADE" in df_yest.columns:
+        df_yest = df_yest[df_yest["UNIDADE"].isin([_upper(u) for u in f_unids])]
+    if len(f_vists) and "VISTORIADOR" in df_yest.columns:
+        df_yest = df_yest[df_yest["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+
+    if "DATA_TS" not in df_yest.columns:
+        df_yest["DATA_TS"] = pd.to_datetime(df_yest["DATA"], errors="coerce")
+
+    have_time_yest = df_yest["DATA_TS"].dt.hour.notna().any()
+    if have_time_today and have_time_yest:
+        cutoff_yest = now_local.replace(
+            year=yesterday_local.year, month=yesterday_local.month, day=yesterday_local.day,
+            second=0, microsecond=0
+        )
+        mask_yest_now = (pd.to_datetime(df_yest["DATA_TS"], errors="coerce") <= cutoff_yest)
+        df_yest_now = df_yest[mask_yest_now]
+        note_text = "Comparando até a mesma hora (base com horário)."
+    else:
+        df_yest_now = df_yest
+        note_text = "Sem horário na base — comparando o dia inteiro."
+
+    erros_hoje_ate_agora = int(len(df_today_now))
+    erros_ontem_mesma_hora = int(len(df_yest_now))
+    delta = erros_hoje_ate_agora - erros_ontem_mesma_hora
+    tendencia = "❌ Piorou" if delta > 0 else ("✅ Melhorou" if delta < 0 else "➡️ Igual")
+
+    cA, cB, cC = st.columns([1, 1, 1])
+    cA.metric("Erros HOJE (até agora)", f"{erros_hoje_ate_agora:,}".replace(",", "."), delta=f"{delta:+d} vs ontem")
+    cB.metric("Erros ONTEM (mesma hora)", f"{erros_ontem_mesma_hora:,}".replace(",", "."))
+    cC.metric("Tendência", tendencia)
+
+    st.caption(f"<span class='small'>{note_text}</span>", unsafe_allow_html=True)
+else:
+    st.info("Para ver o comparativo HOJE x ONTEM, selecione o **dia atual** no filtro de período.")
 
 
 # ------------------ GRÁFICOS ------------------
