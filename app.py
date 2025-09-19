@@ -30,17 +30,17 @@ st.markdown(
     """
 <style>
 .card-wrap{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 6px;}
-.card{background:#f7f7f9;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.06);padding:14px 16px;min-width:180px;flex:1;text-align:center}
+.card{background:#f7f7f9;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.06);padding:14px 16px;min-width:200px;flex:1;text-align:center}
 .card h4{margin:0 0 6px;font-size:14px;color:#b02300;font-weight:700}
 .card h2{margin:0;font-size:26px;font-weight:800;color:#222}
+.card .sub{margin-top:8px;display:inline-block;padding:6px 10px;border-radius:8px;font-size:12px;font-weight:700}
+.sub.ok{background:#e8f5ec;color:#197a31;border:1px solid #cce9d4}
+.sub.bad{background:#fdeaea;color:#a31616;border:1px solid #f2cccc}
+.sub.neu{background:#f1f1f4;color:#444;border:1px solid #e4e4e8}
+.sub small{font-weight:600;color:#555;margin-left:8px}
 .section{font-size:18px;font-weight:800;margin:22px 0 8px}
 .small{color:#666;font-size:13px}
 .table-note{margin-top:8px;color:#666;font-size:12px}
-/* NOVO: badges de tendência nos cards */
-.delta{margin-top:6px;font-size:12px;font-weight:700;display:inline-block;padding:4px 8px;border-radius:999px}
-.delta.good{background:#e8f7ee;color:#18794e}
-.delta.bad{background:#fdebec;color:#b42318}
-.delta.neutral{background:#f1f1f3;color:#555}
 </style>
 """,
     unsafe_allow_html=True,
@@ -233,10 +233,10 @@ def read_quality_month(month_id: str) -> Tuple[pd.DataFrame, str]:
         if need not in dq.columns:
             dq[need] = ""
 
-    # NOVO: preserva timestamp original e mantem DATA como date
+    # Preserva timestamp e mantém DATA (date)
     if "DATA" in dq.columns:
-        dq["DATA_TS"] = pd.to_datetime(dq["DATA"], errors="coerce")  # pode ter hora
-        dq["DATA"] = dq["DATA"].apply(parse_date_any)                # apenas date
+        dq["DATA_TS"] = pd.to_datetime(dq["DATA"], errors="coerce")
+        dq["DATA"] = dq["DATA"].apply(parse_date_any)
     else:
         dq["DATA_TS"] = pd.NaT
 
@@ -249,12 +249,10 @@ def read_quality_month(month_id: str) -> Tuple[pd.DataFrame, str]:
 
 # ------------------ LEITURA / PRODUÇÃO + METAS ------------------
 def read_prod_month(month_sheet_id: str, ym: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
-    """Lê a planilha mensal de produção (aba 1) e, se existir, a aba 'METAS' com
-    colunas VISTORIADOR | UNIDADE | META_MENSAL | DIAS ÚTEIS (variações aceitas)."""
+    """Lê a planilha mensal de produção (aba 1) e, se existir, a aba 'METAS'."""
     sh = client.open_by_key(month_sheet_id)
     title = sh.title or month_sheet_id
 
-    # Produção (sheet1)
     ws = sh.sheet1
     df = pd.DataFrame(ws.get_all_records())
     if not df.empty:
@@ -289,7 +287,6 @@ def read_prod_month(month_sheet_id: str, ym: Optional[str] = None) -> Tuple[pd.D
             df["IS_REV"] = (df["__ORD__"] >= 1).astype(int)
     metas = pd.DataFrame()
 
-    # Aba METAS (opcional)
     try:
         ws_meta = sh.worksheet("METAS")
         rows = ws_meta.get_all_records()
@@ -300,7 +297,6 @@ def read_prod_month(month_sheet_id: str, ym: Optional[str] = None) -> Tuple[pd.D
             c_unid = _find_col(cols, "UNIDADE")
             c_meta = _find_col(cols, "META_MENSAL", "META MENSAL", "META")
             c_du   = _find_col(cols, "DIAS ÚTEIS", "DIAS UTEIS", "DIAS_UTEIS")
-            # Padroniza
             out = pd.DataFrame()
             out["VISTORIADOR"] = dm[c_vist].astype(str).map(_upper) if c_vist else ""
             out["UNIDADE"] = dm[c_unid].astype(str).map(_upper) if c_unid else ""
@@ -316,20 +312,18 @@ def read_prod_month(month_sheet_id: str, ym: Optional[str] = None) -> Tuple[pd.D
 
 
 # ------------------ CARREGA INDEX ------------------
-show_tech = False  # não mostrar infos técnicas no app publicado
+show_tech = False
 
-# Ler índices e usar automaticamente todos os meses ATIVOS
 idx_q = read_index(QUAL_INDEX_ID)
 if "ATIVO" in idx_q.columns:
     idx_q = idx_q[idx_q["ATIVO"].map(_yes)].copy()
-sel_meses = sorted([str(m).strip() for m in idx_q["MÊS"] if str(m).strip()])  # todos
+sel_meses = sorted([str(m).strip() for m in idx_q["MÊS"] if str(m).strip()])
 
 idx_p = read_index(PROD_INDEX_ID)
 if "ATIVO" in idx_p.columns:
     idx_p = idx_p[idx_p["ATIVO"].map(_yes)].copy()
-sel_meses_p = sorted([str(m).strip() for m in idx_p["MÊS"] if str(m).strip()])  # todos
+sel_meses_p = sorted([str(m).strip() for m in idx_p["MÊS"] if str(m).strip()])
 
-# Aplica (sem UI)
 if sel_meses:
     idx_q = idx_q[idx_q["MÊS"].isin(sel_meses)]
 if sel_meses_p:
@@ -338,12 +332,10 @@ if sel_meses_p:
 dq_all, ok_q, er_q = [], [], []
 for _, r in idx_q.iterrows():
     sid = _sheet_id(r["URL"])
-    if not sid:
-        continue
+    if not sid: continue
     try:
         dq, ttl = read_quality_month(sid)
-        if not dq.empty:
-            dq_all.append(dq)
+        if not dq.empty: dq_all.append(dq)
         ok_q.append(f"✅ {ttl} — {len(dq):,} linhas".replace(",", "."))
     except Exception as e:
         er_q.append((sid, e))
@@ -352,8 +344,7 @@ dp_all, metas_all, ok_p, er_p = [], [], [], []
 for _, r in idx_p.iterrows():
     sid = _sheet_id(r["URL"])
     ym  = _ym_token(r.get("MÊS", ""))
-    if not sid:
-        continue
+    if not sid: continue
     try:
         dp, dm, ttl = read_prod_month(sid, ym=ym)
         if not dp.empty:    dp_all.append(dp)
@@ -384,23 +375,16 @@ dfMetas = pd.concat(metas_all, ignore_index=True) if metas_all else pd.DataFrame
 if "EMPRESA" in dfQ.columns:
     dfQ = dfQ[dfQ["EMPRESA"] == "STARCHECK"].copy()
 
-# meses únicos (YYYY-MM) a partir da coluna DATA
 s_all_dt = pd.to_datetime(dfQ["DATA"], errors="coerce")
-ym_all = (
-    s_all_dt.dt.to_period("M").dropna().astype(str).unique().tolist()
-)
-ym_all = sorted(ym_all)
-
+ym_all = sorted(s_all_dt.dt.to_period("M").dropna().astype(str).unique().tolist())
 if not ym_all:
     st.error("Qualidade sem colunas de Data válidas."); st.stop()
 
-# mapeia para "MM/YYYY" para exibição
 label_map = {f"{m[5:]}/{m[:4]}": m for m in ym_all}
 sel_label = st.selectbox("Mês de referência", options=list(label_map.keys()), index=len(ym_all)-1)
 ym_sel = label_map[sel_label]
 ref_year, ref_month = int(ym_sel[:4]), int(ym_sel[5:7])
 
-# máscara do mês escolhido
 mask_mes = (s_all_dt.dt.year.eq(ref_year) & s_all_dt.dt.month.eq(ref_month))
 dfQ_mes = dfQ[mask_mes].copy()
 
@@ -416,7 +400,7 @@ start_d, end_d = (drange if isinstance(drange, tuple) and len(drange)==2 else (m
 mask_dias = s_mes_dates.map(lambda d: isinstance(d, date) and start_d <= d <= end_d)
 viewQ = dfQ_mes[mask_dias].copy()
 
-# -------- Filtros extras (ANTES de Produção) --------
+# -------- Filtros extras --------
 unids = sorted(viewQ["UNIDADE"].dropna().unique().tolist()) if "UNIDADE" in viewQ.columns else []
 vist_opts = sorted(viewQ["VISTORIADOR"].dropna().unique().tolist()) if "VISTORIADOR" in viewQ.columns else []
 
@@ -435,7 +419,7 @@ if f_vists:
 if viewQ.empty:
     st.info("Sem registros de Qualidade no período/filtros."); st.stop()
 
-# -------- Produção: mesmo mês, mesmo intervalo e MESMOS filtros --------
+# -------- Produção alinhada --------
 if not dfP.empty:
     s_p_dates_all = pd.to_datetime(dfP["__DATA__"], errors="coerce").dt.date
     maskp_mes = s_p_dates_all.map(lambda d: isinstance(d, date) and d.year == ref_year and d.month == ref_month)
@@ -453,53 +437,13 @@ else:
     viewP = dfP.copy()
 
 
-# ------------------ KPIs (com tendência da marca) ------------------
+# ------------------ KPIs ------------------
 grav_gg = {"GRAVE", "GRAVISSIMO", "GRAVÍSSIMO"}
-
-# Base atual (já filtrada)
 total_erros = int(len(viewQ))
 total_gg = int(viewQ["GRAVIDADE"].isin(grav_gg).sum()) if "GRAVIDADE" in viewQ.columns else 0
 vist_avaliados = int(viewQ["VISTORIADOR"].nunique()) if "VISTORIADOR" in viewQ.columns else 0
 media_por_vist = (total_erros / vist_avaliados) if vist_avaliados else 0
 
-# Produção para taxa bruta
-total_vist_brutas = int(len(viewP)) if not viewP.empty else 0
-taxa_geral = (total_erros / total_vist_brutas * 100) if total_vist_brutas else np.nan
-taxa_geral_str = "—" if np.isnan(taxa_geral) else f"{taxa_geral:.1f}%".replace(".", ",")
-
-# Tendência da marca: mesmo período do mês anterior com os mesmos filtros
-periodo_atual_ini, periodo_atual_fim = start_d, end_d
-prev_ini = (pd.Timestamp(periodo_atual_ini) - relativedelta(months=1)).date()
-prev_fim = (pd.Timestamp(periodo_atual_fim) - relativedelta(months=1)).date()
-
-df_prev = dfQ.copy()
-dt_prev = pd.to_datetime(df_prev["DATA"], errors="coerce").dt.date
-df_prev = df_prev[dt_prev.between(prev_ini, prev_fim)].copy()
-if "UNIDADE" in df_prev.columns and len(f_unids):
-    df_prev = df_prev[df_prev["UNIDADE"].isin([_upper(u) for u in f_unids])]
-if "VISTORIADOR" in df_prev.columns and len(f_vists):
-    df_prev = df_prev[df_prev["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
-
-prev_total_erros = int(len(df_prev))
-prev_total_gg = int(df_prev["GRAVIDADE"].isin(grav_gg).sum()) if "GRAVIDADE" in df_prev.columns else 0
-
-def _delta_props(cur: int, prev: int):
-    if prev > 0:
-        pct = (cur - prev) / prev * 100.0
-        pct_str = f"{pct:+.1f}%".replace(".", ",")
-    else:
-        pct_str = "—"
-        pct = 0.0
-    if cur < prev:
-        return pct_str, "good", "Melhorou"
-    if cur > prev:
-        return pct_str, "bad", "Piorou"
-    return pct_str, "neutral", "Igual"
-
-delta_tot_str, delta_tot_cls, delta_tot_lbl = _delta_props(total_erros, prev_total_erros)
-delta_gg_str,  delta_gg_cls,  delta_gg_lbl  = _delta_props(total_gg,   prev_total_gg)
-
-# Vistoriadores com >=5 GG (sem tendência)
 if "GRAVIDADE" in viewQ.columns:
     gg_by_vist = (
         viewQ[viewQ["GRAVIDADE"].isin(grav_gg)]
@@ -509,42 +453,134 @@ if "GRAVIDADE" in viewQ.columns:
 else:
     vist_5gg = 0
 
-# Render cards com badges
-cards_html = []
-cards_html.append(
-    f"<div class='card'><h4>Total de erros (período)</h4>"
-    f"<h2>{str(total_erros).replace(',', '.')}</h2>"
-    f"<div class='delta {delta_tot_cls}'>{delta_tot_str} · {delta_tot_lbl}</div></div>"
-)
-cards_html.append(
-    f"<div class='card'><h4>Vistoriadores com ≥5 erros GG</h4>"
-    f"<h2>{str(vist_5gg).replace(',', '.')}</h2></div>"
-)
-cards_html.append(
-    f"<div class='card'><h4>Erros Grave+Gravíssimo</h4>"
-    f"<h2>{str(total_gg).replace(',', '.')}</h2>"
-    f"<div class='delta {delta_gg_cls}'>{delta_gg_str} · {delta_gg_lbl}</div></div>"
-)
-cards_html.append(
-    f"<div class='card'><h4>Vistoriadores avaliados</h4>"
-    f"<h2>{str(vist_avaliados).replace(',', '.')}</h2></div>"
-)
-cards_html.append(
-    f"<div class='card'><h4>Média de erros / vistoriador</h4>"
-    f"<h2>{media_por_vist:.1f}".replace(".", ",") + "</h2></div>"
-)
-cards_html.append(
-    f"<div class='card'><h4>Taxa de erro (bruta)</h4>"
-    f"<h2>{taxa_geral_str}</h2></div>"
-)
+total_vist_brutas = int(len(viewP)) if not viewP.empty else 0
+taxa_geral = (total_erros / total_vist_brutas * 100) if total_vist_brutas else np.nan
+taxa_geral_str = "—" if np.isnan(taxa_geral) else f"{taxa_geral:.1f}%".replace(".", ",")
 
-st.markdown("<div class='card-wrap'>" + "".join(cards_html) + "</div>", unsafe_allow_html=True)
+# ---- Comparativo com mesmo intervalo do mês anterior (para os cards) ----
+periodo_atual_ini, periodo_atual_fim = start_d, end_d
+prev_ini = (pd.Timestamp(periodo_atual_ini) - relativedelta(months=1)).date()
+prev_fim = (pd.Timestamp(periodo_atual_fim) - relativedelta(months=1)).date()
+
+dfQ["_DT_"] = pd.to_datetime(dfQ["DATA"], errors="coerce").dt.date
+mask_prev = dfQ["_DT_"].between(prev_ini, prev_fim)
+prev_base_cards = dfQ[mask_prev].copy()
+if "UNIDADE" in prev_base_cards.columns and len(f_unids):
+    prev_base_cards = prev_base_cards[prev_base_cards["UNIDADE"].isin([_upper(u) for u in f_unids])]
+if "VISTORIADOR" in prev_base_cards.columns and len(f_vists):
+    prev_base_cards = prev_base_cards[prev_base_cards["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+
+prev_total = int(len(prev_base_cards))
+prev_gg = int(prev_base_cards["GRAVIDADE"].isin(grav_gg).sum()) if "GRAVIDADE" in prev_base_cards.columns else 0
+
+def _pct_delta(cur, prev):
+    if prev <= 0:
+        return None
+    return (cur - prev) / prev * 100.0
+
+def _badge_html(delta_pct, prev_value):
+    if delta_pct is None:
+        cls, txt = "neu", "—"
+    else:
+        sign = "+" if delta_pct >= 0 else ""
+        status = "Piorou" if delta_pct > 0 else ("Melhorou" if delta_pct < 0 else "Igual")
+        cls = "bad" if delta_pct > 0 else ("ok" if delta_pct < 0 else "neu")
+        txt = f"{sign}{delta_pct:.1f}% · {status}"
+    prev_txt = f"<small>mês ant: {prev_value:,}</small>".replace(",", ".")
+    return f"<span class='sub {cls}'>{txt} {prev_txt}</span>"
+
+delta_total = _pct_delta(total_erros, prev_total)
+delta_gg    = _pct_delta(total_gg, prev_gg)
+badge_total = _badge_html(delta_total, prev_total)
+badge_gg    = _badge_html(delta_gg, prev_gg)
+
+# ---- Projeções do mês (marca) ----
+month_start = date(ref_year, ref_month, 1)
+last_day = calendar.monthrange(ref_year, ref_month)[1]
+month_end = date(ref_year, ref_month, last_day)
+
+dfQ["_DTONLY_"] = pd.to_datetime(dfQ["DATA"], errors="coerce").dt.date
+mask_mtd = dfQ["_DTONLY_"].between(month_start, min(end_d, month_end))
+mtd_all = dfQ[mask_mtd].copy()
+if "UNIDADE" in mtd_all.columns and len(f_unids):
+    mtd_all = mtd_all[mtd_all["UNIDADE"].isin([_upper(u) for u in f_unids])]
+if "VISTORIADOR" in mtd_all.columns and len(f_vists):
+    mtd_all = mtd_all[mtd_all["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+
+erros_mtd_total = int(len(mtd_all))
+erros_mtd_gg = int(mtd_all["GRAVIDADE"].isin(grav_gg).sum()) if "GRAVIDADE" in mtd_all.columns else 0
+
+dias_passados = business_days_count(month_start, min(end_d, month_end))
+dias_totais_fallback = business_days_count(month_start, month_end)
+
+def _proj(cur_mtd):
+    if dias_passados == 0:
+        return cur_mtd
+    return int(round(cur_mtd / dias_passados * dias_totais_fallback))
+
+proj_total = _proj(erros_mtd_total)
+proj_gg = _proj(erros_mtd_gg)
+
+# ------------------ CARDS ------------------
+cards_html = """
+<div class="card-wrap">
+  <div class='card'>
+    <h4>Total de erros (período)</h4>
+    <h2>{total_erros}</h2>
+    {badge_total}
+  </div>
+  <div class='card'>
+    <h4>Vistoriadores com ≥5 erros GG</h4>
+    <h2>{vist_5gg}</h2>
+  </div>
+  <div class='card'>
+    <h4>Erros Grave+Gravíssimo</h4>
+    <h2>{total_gg}</h2>
+    {badge_gg}
+  </div>
+  <div class='card'>
+    <h4>Vistoriadores avaliados</h4>
+    <h2>{vist_avaliados}</h2>
+  </div>
+  <div class='card'>
+    <h4>Média de erros / vistoriador</h4>
+    <h2>{media_por_vist}</h2>
+  </div>
+  <div class='card'>
+    <h4>Taxa de erro (bruta)</h4>
+    <h2>{taxa_geral}</h2>
+  </div>
+  <div class='card'>
+    <h4>Projeção do mês — Erros</h4>
+    <h2>{proj_total}</h2>
+    <span class='sub neu'>MTD: {mtd_total}</span>
+  </div>
+  <div class='card'>
+    <h4>Projeção do mês — Erros GG</h4>
+    <h2>{proj_gg}</h2>
+    <span class='sub neu'>MTD: {mtd_gg}</span>
+  </div>
+</div>
+""".format(
+    total_erros=f"{total_erros:,}".replace(",", "."),
+    badge_total=badge_total,
+    vist_5gg=f"{vist_5gg:,}".replace(",", "."),
+    total_gg=f"{total_gg:,}".replace(",", "."),
+    badge_gg=badge_gg,
+    vist_avaliados=f"{vist_avaliados:,}".replace(",", "."),
+    media_por_vist=f"{media_por_vist:.1f}".replace(".", ","),
+    taxa_geral=taxa_geral_str,
+    proj_total=f"{proj_total:,}".replace(",", "."),
+    proj_gg=f"{proj_gg:,}".replace(",", "."),
+    mtd_total=f"{erros_mtd_total:,}".replace(",", "."),
+    mtd_gg=f"{erros_mtd_gg:,}".replace(",", "."),
+)
+st.markdown(cards_html, unsafe_allow_html=True)
 
 
 # ------------------ HOJE x ONTEM (ATÉ AGORA) ------------------
 st.markdown('<div class="section">⏱️ Hoje vs Ontem (até agora)</div>', unsafe_allow_html=True)
 
-# Timezone local (opcional)
 try:
     from zoneinfo import ZoneInfo
     tz = ZoneInfo("America/Fortaleza")
@@ -577,6 +613,7 @@ if start_d == end_d == today_local:
     df_today = viewQ.copy()
     if "DATA_TS" not in df_today.columns:
         df_today["DATA_TS"] = pd.to_datetime(df_today["DATA"], errors="coerce")
+
     ts_today = _as_naive_ts(df_today["DATA_TS"])
     have_time_today = ts_today.dt.hour.notna().any()
 
@@ -597,6 +634,7 @@ if start_d == end_d == today_local:
 
     if "DATA_TS" not in df_yest.columns:
         df_yest["DATA_TS"] = pd.to_datetime(df_yest["DATA"], errors="coerce")
+
     ts_yest = _as_naive_ts(df_yest["DATA_TS"])
     have_time_yest = ts_yest.dt.hour.notna().any()
 
@@ -604,7 +642,8 @@ if start_d == end_d == today_local:
         cutoff_yest = _as_naive_cutoff(
             now_local.replace(year=yesterday_local.year, month=yesterday_local.month, day=yesterday_local.day)
         )
-        df_yest_now = df_yest[ts_yest <= cutoff_yest]
+        mask_yest_now = (ts_yest <= cutoff_yest)
+        df_yest_now = df_yest[mask_yest_now]
         note_text = "Comparando até a mesma hora (base com horário)."
     else:
         df_yest_now = df_yest
@@ -640,61 +679,61 @@ def bar_with_labels(df, x_col, y_col, x_title="", y_title="QTD", height=320):
 c1, c2 = st.columns(2)
 
 if "UNIDADE" in viewQ.columns:
-   with c1:
-    st.markdown('<div class="section">🏙️ Erros por unidade</div>', unsafe_allow_html=True)
-    by_city = (
-        viewQ.groupby("UNIDADE", dropna=False)["ERRO"].size().reset_index(name="QTD")
-    )
-    if not viewP.empty and "UNIDADE" in viewP.columns:
-        prod_city = (
-            viewP.groupby("UNIDADE", dropna=False)["IS_REV"].size().reset_index(name="VIST")
+    with c1:
+        st.markdown('<div class="section">🏙️ Erros por unidade</div>', unsafe_allow_html=True)
+        by_city = (
+            viewQ.groupby("UNIDADE", dropna=False)["ERRO"].size().reset_index(name="QTD")
         )
-    else:
-        prod_city = pd.DataFrame(columns=["UNIDADE", "VIST"])
+        if not viewP.empty and "UNIDADE" in viewP.columns:
+            prod_city = (
+                viewP.groupby("UNIDADE", dropna=False)["IS_REV"].size().reset_index(name="VIST")
+            )
+        else:
+            prod_city = pd.DataFrame(columns=["UNIDADE", "VIST"])
 
-    by_city = by_city.merge(prod_city, on="UNIDADE", how="left").fillna({"VIST": 0})
-    by_city["%ERRO"] = np.where(by_city["VIST"] > 0, (by_city["QTD"] / by_city["VIST"]) * 100, np.nan)
+        by_city = by_city.merge(prod_city, on="UNIDADE", how="left").fillna({"VIST": 0})
+        by_city["%ERRO"] = np.where(by_city["VIST"] > 0, (by_city["QTD"] / by_city["VIST"]) * 100, np.nan)
 
-    if by_city["%ERRO"].isna().all():
-        total_err = by_city["QTD"].sum()
-        by_city["%ERRO"] = np.where(total_err > 0, (by_city["QTD"] / total_err) * 100, np.nan)
-        y2_title = "% dos erros"
-    else:
-        y2_title = "% de erro (erros/vistorias)"
+        if by_city["%ERRO"].isna().all():
+            total_err = by_city["QTD"].sum()
+            by_city["%ERRO"] = np.where(total_err > 0, (by_city["QTD"] / total_err) * 100, np.nan)
+            y2_title = "% dos erros"
+        else:
+            y2_title = "% de erro (erros/vistorias)"
 
-    by_city["PCT"] = by_city["%ERRO"] / 100.0
-    by_city = by_city.sort_values("QTD", ascending=False).reset_index(drop=True)
-    order = by_city["UNIDADE"].tolist()
+        by_city["PCT"] = by_city["%ERRO"] / 100.0
+        by_city = by_city.sort_values("QTD", ascending=False).reset_index(drop=True)
+        order = by_city["UNIDADE"].tolist()
 
-    bars = (
-        alt.Chart(by_city).mark_bar().encode(
-            x=alt.X("UNIDADE:N", sort=order, axis=alt.Axis(labelAngle=0, labelLimit=180), title="UNIDADE"),
-            y=alt.Y("QTD:Q", title="QTD"),
-            tooltip=["UNIDADE", "QTD", alt.Tooltip("PCT:Q", format=".1%", title=y2_title)],
+        bars = (
+            alt.Chart(by_city).mark_bar().encode(
+                x=alt.X("UNIDADE:N", sort=order, axis=alt.Axis(labelAngle=0, labelLimit=180), title="UNIDADE"),
+                y=alt.Y("QTD:Q", title="QTD"),
+                tooltip=["UNIDADE", "QTD", alt.Tooltip("PCT:Q", format=".1%", title=y2_title)],
+            )
         )
-    )
-    bar_labels = (
-        alt.Chart(by_city).mark_text(dy=-6).encode(
-            x=alt.X("UNIDADE:N", sort=order),
-            y="QTD:Q",
-            text=alt.Text("QTD:Q", format=".0f"),
+        bar_labels = (
+            alt.Chart(by_city).mark_text(dy=-6).encode(
+                x=alt.X("UNIDADE:N", sort=order),
+                y="QTD:Q",
+                text=alt.Text("QTD:Q", format=".0f"),
+            )
         )
-    )
-    line = (
-        alt.Chart(by_city).mark_line(point=True, color="#b02300").encode(
-            x=alt.X("UNIDADE:N", sort=order),
-            y=alt.Y("PCT:Q", axis=alt.Axis(title=y2_title, format=".1%")),
+        line = (
+            alt.Chart(by_city).mark_line(point=True, color="#b02300").encode(
+                x=alt.X("UNIDADE:N", sort=order),
+                y=alt.Y("PCT:Q", axis=alt.Axis(title=y2_title, format=".1%")),
+            )
         )
-    )
-    line_labels = (
-        alt.Chart(by_city).mark_text(color="#b02300", dy=-8, fontWeight="bold").encode(
-            x=alt.X("UNIDADE:N", sort=order),
-            y="PCT:Q",
-            text=alt.Text("PCT:Q", format=".1%"),
+        line_labels = (
+            alt.Chart(by_city).mark_text(color="#b02300", dy=-8, fontWeight="bold").encode(
+                x=alt.X("UNIDADE:N", sort=order),
+                y="PCT:Q",
+                text=alt.Text("PCT:Q", format=".1%"),
+            )
         )
-    )
-    chart = alt.layer(bars, bar_labels, line, line_labels).resolve_scale(y="independent").properties(height=340)
-    st.altair_chart(chart, use_container_width=True)
+        chart = alt.layer(bars, bar_labels, line, line_labels).resolve_scale(y="independent").properties(height=340)
+        st.altair_chart(chart, use_container_width=True)
 
 if "GRAVIDADE" in viewQ.columns:
     with c2:
@@ -736,7 +775,6 @@ with ex1:
         st.info("Sem dados para montar o Pareto no período/filtros atuais.")
     else:
         max_cats = min(30, n_err)
-
         if max_cats < 1:
             st.info("Sem categorias suficientes para montar o Pareto.")
         else:
@@ -900,23 +938,15 @@ st.dataframe(fmt[show_cols], use_container_width=True, hide_index=True)
 st.markdown("---")
 st.markdown('<div class="section">📈 Tendência de erros (projeção até o fim do mês)</div>', unsafe_allow_html=True)
 
-month_start = date(ref_year, ref_month, 1)
-last_day = calendar.monthrange(ref_year, ref_month)[1]
-month_end = date(ref_year, ref_month, last_day)
+# (já calculamos month_start, month_end, dias_passados, dias_totais_fallback e mtd acima)
+# Se quiser usar os DIAS_UTEIS da METAS como base agregada, substitua dias_totais_fallback
+# por, por exemplo, metas_cur["DIAS_UTEIS"].median() ou .mode/dropna etc.
 
-# MTD até end_d com MESMOS filtros de unidade/vistoriador
-dfQ["_DT_"] = pd.to_datetime(dfQ["DATA"], errors="coerce").dt.date
-mask_mtd = dfQ["_DT_"].between(month_start, min(end_d, month_end))
-mtd = dfQ[mask_mtd].copy()
-if "UNIDADE" in mtd.columns and len(f_unids):
-    mtd = mtd[mtd["UNIDADE"].isin([_upper(u) for u in f_unids])]
-if "VISTORIADOR" in mtd.columns and len(f_vists):
-    mtd = mtd[mtd["VISTORIADOR"].isin([_upper(v) for u in f_vists])]
-
+# MTD com os mesmos filtros já está em mtd_all; agora por vistoriador como antes:
+mtd = mtd_all.copy()
 erros_mtd = (mtd.groupby("VISTORIADOR", dropna=False)["ERRO"]
              .size().reset_index(name="ERROS_MTD"))
 
-# DIAS ÚTEIS por vistoriador (da aba METAS do mês corrente, se existir)
 ym_cur = f"{ref_year}-{ref_month:02d}"
 metas_cur = dfMetas[dfMetas["YM"].fillna("").astype(str) == ym_cur].copy() if "YM" in dfMetas.columns else dfMetas.copy()
 du_map = {}
@@ -928,14 +958,9 @@ if not metas_cur.empty and "DIAS_UTEIS" in metas_cur.columns:
         except Exception:
             pass
 
-# Passados = dias úteis entre início do mês e end_d
-dias_passados = business_days_count(month_start, min(end_d, month_end))
-dias_totais_fallback = business_days_count(month_start, month_end)
-
 rows = []
 for _, r in erros_mtd.iterrows():
-    v = r["VISTORIADOR"]
-    e_mtd = int(r["ERROS_MTD"])
+    v = r["VISTORIADOR"]; e_mtd = int(r["ERROS_MTD"])
     du_total = du_map.get(v, dias_totais_fallback) or dias_totais_fallback
     du_pass  = min(dias_passados, du_total) if du_total else dias_passados
     erros_dia = (e_mtd / du_pass) if du_pass else np.nan
@@ -960,7 +985,6 @@ st.markdown("---")
 st.markdown('<div class="section">🧾 Detalhamento (linhas da base)</div>', unsafe_allow_html=True)
 
 det = viewQ.copy()
-
 with st.expander("Filtros deste quadro (opcional)", expanded=False):
     c1, c2, c3 = st.columns(3)
     c4, c5, c6 = st.columns(3)
@@ -983,7 +1007,6 @@ with st.expander("Filtros deste quadro (opcional)", expanded=False):
     f_vist        = c6.multiselect("Vistoriador", opts_vist, default=opts_vist)
     f_analista    = c6.multiselect("Analista", opts_analista, default=opts_analista, key="det_analista")
 
-# Aplica filtros
 if isinstance(f_data, tuple) and len(f_data) == 2:
     dini, dfim = f_data
     _d = pd.to_datetime(det["DATA"], errors="coerce").dt.date
@@ -991,7 +1014,6 @@ if isinstance(f_data, tuple) and len(f_data) == 2:
 
 if f_placa.strip():
     det = det[det["PLACA"].astype(str).str.contains(f_placa.strip(), case=False, na=False)]
-
 if len(f_erros):    det = det[det["ERRO"].isin(f_erros)]
 if len(f_grav):     det = det[det["GRAVIDADE"].isin(f_grav)]      if "GRAVIDADE"  in det.columns else det
 if len(f_cidade):   det = det[det["UNIDADE"].isin(f_cidade)]      if "UNIDADE"    in det.columns else det
@@ -1000,34 +1022,18 @@ if len(f_analista): det = det[det["ANALISTA"].isin(f_analista)]   if "ANALISTA" 
 
 det_cols = ["DATA","UNIDADE","VISTORIADOR","PLACA","ERRO","GRAVIDADE","ANALISTA","OBS"]
 for c in det_cols:
-    if c not in det.columns:
-        det[c] = ""
+    if c not in det.columns: det[c] = ""
 det = det[det_cols].sort_values(["DATA","UNIDADE","VISTORIADOR"])
-
 st.dataframe(det, use_container_width=True, hide_index=True)
 st.caption('<div class="table-note">* Filtros desta tabela são independentes dos filtros do topo do painel.</div>', unsafe_allow_html=True)
 
-# ------------------ COMPARATIVO PERÍODO ATUAL x MÊS ANTERIOR (MESMO INTERVALO) ------------------
+# ------------------ COMPARATIVO ATUAL x MÊS ANTERIOR (MESMO INTERVALO) ------------------
 st.markdown("---")
 st.markdown('<div class="section">📊 Comparativo por colaborador — período atual x mesmo período do mês anterior</div>', unsafe_allow_html=True)
 
-periodo_atual_ini, periodo_atual_fim = start_d, end_d
-prev_ini = (pd.Timestamp(periodo_atual_ini) - relativedelta(months=1)).date()
-prev_fim = (pd.Timestamp(periodo_atual_fim) - relativedelta(months=1)).date()
-
-dfQ["_DT_"] = pd.to_datetime(dfQ["DATA"], errors="coerce").dt.date
-mask_prev = dfQ["_DT_"].between(prev_ini, prev_fim)
-
-prev_base = dfQ[mask_prev].copy()
-if "UNIDADE" in prev_base.columns and len(f_unids):
-    prev_base = prev_base[prev_base["UNIDADE"].isin([_upper(u) for u in f_unids])]
-if "VISTORIADOR" in prev_base.columns and len(f_vists):
-    prev_base = prev_base[prev_base["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
-
-cur = (viewQ.groupby("VISTORIADOR", dropna=False)["ERRO"]
-       .size().reset_index(name="ERROS_ATUAL"))
-prev = (prev_base.groupby("VISTORIADOR", dropna=False)["ERRO"]
-        .size().reset_index(name="ERROS_ANT"))
+prev_base = prev_base_cards  # já calculado com filtros
+cur = (viewQ.groupby("VISTORIADOR", dropna=False)["ERRO"].size().reset_index(name="ERROS_ATUAL"))
+prev = (prev_base.groupby("VISTORIADOR", dropna=False)["ERRO"].size().reset_index(name="ERROS_ANT"))
 
 tab = cur.merge(prev, on="VISTORIADOR", how="outer").fillna(0)
 tab["Δ"] = tab["ERROS_ATUAL"] - tab["ERROS_ANT"]
