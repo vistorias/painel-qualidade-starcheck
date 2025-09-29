@@ -1095,38 +1095,36 @@ st.dataframe(
     use_container_width=True, hide_index=True,
 )
 
-# ------------------ COMPARATIVO SEMANAL (3 semanas dinâmicas + 3 status) ------------------
+# ------------------ COMPARATIVO SEMANAL (automático: 2 a 4 semanas) ------------------
 st.markdown("---")
 st.markdown("### 🔵 Comparativo semanal por vistoriador")
 
-# ---- 1) Escolhe o último dia com dados (Q ou P); se não houver, usa end_d do filtro
-def _last_date_with_data():
-    qd = pd.to_datetime(viewQ["DATA"], errors="coerce").dt.date.dropna()
-    pd_ = pd.to_datetime(viewP["__DATA__"], errors="coerce").dt.date.dropna() if not viewP.empty else pd.Series([], dtype="object")
-    pool = []
-    if len(qd):  pool.append(qd.max())
-    if len(pd_): pool.append(pd_.max())
-    return max(pool) if pool else end_d
+# Base do mês/intervalo atual já existe no seu código:
+# - ref_year, ref_month
+# - month_start, month_end  (já calculados acima)
+# - end_d                    (fim do período escolhido)
+# - viewQ, viewP             (qualidade e produção filtradas)
+# - denom_mode               ("Bruta (recomendado)" | "Líquida")
 
-anchor_end = _last_date_with_data()
-
-# ---- 2) Constroi blocos semanais de trás pra frente (7 dias), pega as ÚLTIMAS 3 com dados
-def _wk_range(end_date):
-    start = (pd.Timestamp(end_date) - pd.Timedelta(days=6)).date()
-    return start, end_date
+# Vamos construir semanas de 7 dias DENTRO DO MÊS atual, terminando em end_d.
+# S_k é a mais recente. Limitamos a no máx 4 semanas (1 mês comporta até 4 cheias + 1 parcial).
+def _clip_month(di, dfim):
+    di = max(di, month_start)
+    dfim = min(dfim, month_end)
+    return di, dfim
 
 def _slice_q(df, di, dfim):
     d = pd.to_datetime(df["DATA"], errors="coerce").dt.date
     return df[d.between(di, dfim)]
 
 def _slice_p(df, di, dfim):
-    if df.empty: 
-        return df.copy()
     d = pd.to_datetime(df["__DATA__"], errors="coerce").dt.date
     return df[d.between(di, dfim)]
 
-grav_gg = {"GRAVE", "GRAVISSIMO", "GRAVÍSSIMO"}
 def _pct_week(qdf, pdf):
+    """ERROS por vist. + %ERRO (bruta ou líquida) para uma janela semanal."""
+    grav_gg = {"GRAVE", "GRAVISSIMO", "GRAVÍSSIMO"}
+
     # Qualidade
     if qdf.empty:
         qual = pd.DataFrame(columns=["VISTORIADOR","ERROS","ERROS_GG"])
@@ -1148,123 +1146,140 @@ def _pct_week(qdf, pdf):
     den_col = "liq" if denom_mode.startswith("Líquida") else "vist"
     out = prod.merge(qual, on="VISTORIADOR", how="outer").fillna(0)
 
-    den = out[den_col].replace({0: np.nan})
+    # Garante numéricos
+    for c in ["vist","rev","liq","ERROS","ERROS_GG"]:
+        if c in out.columns:
+            out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0)
+
+    den = out[den_col].replace({0: np.nan}).astype(float)
     out["%ERRO"]    = (out["ERROS"]    / den * 100).round(1)
     out["%ERRO_GG"] = (out["ERROS_GG"] / den * 100).round(1)
     out["DEN"] = out[den_col].fillna(0).astype(int)
+
     return out[["VISTORIADOR","ERROS","%ERRO","ERROS_GG","%ERRO_GG","DEN"]]
 
-def _make_week_block(di, dfim, prefix):
+def _make_week_block(di, dfim, prefix, meta_list):
+    """Retorna DF com prefixo + registra legenda (datas) para caption."""
     q = _slice_q(viewQ, di, dfim)
     p = _slice_p(viewP, di, dfim)
-    return _pct_week(q, p).add_prefix(prefix), (di, dfim), (len(q) + len(p))  # também devolve metadados
+    meta_list.append((prefix, di, dfim))
+    return _pct_week(q, p).add_prefix(prefix)
 
-# Gera até 6 semanas pra trás e depois escolhe as 3 com mais recentes que tenham dados (ou mesmo vazias, mas preferindo com dados)
-weeks_meta = []
-end_ptr = anchor_end
-for _ in range(6):  # segurança
-    di, dfim = _wk_range(end_ptr)
-    wk_df, rng, weight = _make_week_block(di, dfim, f"_tmp_")
-    weeks_meta.append((wk_df, rng, weight))
-    end_ptr = (pd.Timestamp(di) - pd.Timedelta(days=1)).date()
+# Construção das semanas (mais recente para trás), todas dentro do mês atual
+sem_fins = []
+cur_end = min(end_d, month_end)
+for _ in range(4):  # tenta até 4
+    di = (pd.Timestamp(cur_end) - pd.Timedelta(days=6)).date()
+    di, dfim = _clip_month(di, cur_end)
+    if di > dfim or dfim < month_start:
+        break
+    sem_fins.append((di, dfim))
+    # próxima semana termina no dia anterior ao início da atual
+    cur_end = (pd.Timestamp(di) - pd.Timedelta(days=1)).date()
+    if cur_end < month_start:
+        break
 
-# Ordena por data de fim (mais recente primeiro) e pega as 3 primeiras
-weeks_meta = sorted(weeks_meta, key=lambda x: x[1][1], reverse=True)[:3]
-# Reversa para ficar S1 (mais antiga), S2, S3 (mais recente)
-weeks_meta = list(reversed(weeks_meta))
+# Se não houver ao menos 2 semanas, não vale o comparativo
+if len(sem_fins) < 2:
+    st.info("Sem semanas suficientes no mês para montar o comparativo.")
+else:
+    # Ordena da MAIS ANTIGA -> MAIS RECENTE e dá nomes S1..Sk
+    sem_fins = list(reversed(sem_fins))
+    k = len(sem_fins)
 
-# Renomeia colunas com prefixos S1_, S2_, S3_ e captura ranges p/ legenda
-wks = []
-labels = []
-for i, (dfw, (di, dfim), _) in enumerate(weeks_meta, start=1):
-    pref = f"S{i}_"
-    dfw = dfw.rename(columns={c: c.replace("_tmp_", pref) for c in dfw.columns})
-    wks.append(dfw)
-    labels.append((f"Semana {i}" + (" (atual)" if i == 3 else ""), di, dfim))
+    # Monta blocos S1..Sk
+    meta = []  # (prefix, di, dfim)
+    blocks = []
+    for i, (di, dfim) in enumerate(sem_fins, start=1):
+        blocks.append(_make_week_block(di, dfim, f"S{i}_", meta))
 
-# Legenda
-st.caption("  ·  ".join([f"**{nm}**: {di:%d/%m}–{df:%d/%m}" for nm, di, df in labels]))
+    # Merge dinâmico por VISTORIADOR
+    from functools import reduce
+    tab = reduce(
+        lambda L, R: L.merge(R, left_on=f"{L.columns[0]}", right_on=f"{R.columns[0]}", how="outer"),
+        blocks
+    )
 
-# ---- 3) Junta as 3 semanas com chaves robustas
-def _safe_merge(left, right, lkey, rkey):
-    for col in (lkey, rkey):
-        if col not in left.columns and col not in right.columns:
-            # cria coluna vazia para permitir o merge externo
-            left[col] = "" if col not in left.columns else left[col]
-            right[col] = "" if col not in right.columns else right[col]
-    return left.merge(right, left_on=lkey, right_on=rkey, how="outer")
+    # Unifica a coluna VISTORIADOR (pega o 1º nome não vazio entre S1_, S2_, ...)
+    def _pick_row(row):
+        for i in range(1, k+1):
+            v = row.get(f"S{i}_VISTORIADOR", "")
+            if isinstance(v, str) and v.strip():
+                return v
+        return ""
+    tab["VISTORIADOR"] = tab.apply(_pick_row, axis=1)
 
-wk1, wk2, wk3 = wks
-tab = _safe_merge(wk1, wk2, "S1_VISTORIADOR", "S2_VISTORIADOR")
-tab = _safe_merge(tab, wk3, "S1_VISTORIADOR", "S3_VISTORIADOR")
+    # Preenche NaN numéricos de contagem; mantém % como NaN (para virar "—" no formato)
+    for c in tab.columns:
+        if c.endswith("ERROS") or c.endswith("ERROS_GG") or c.endswith("DEN"):
+            tab[c] = pd.to_numeric(tab[c], errors="coerce").fillna(0).astype(int)
 
-# Nome consolidado
-def _pick(a, b, c):
-    for v in (a, b, c):
-        if isinstance(v, str) and v.strip(): return v
-    return ""
+    # -------- Deltas e status entre semanas consecutivas (sempre relativo a %ERRO)
+    def _status_pp(delta):
+        if pd.isna(delta): return "—"
+        if delta < 0:     return f"Melhorou (↓ {abs(delta):.1f} pp)"
+        if delta > 0:     return f"Piorou (↑ {delta:.1f} pp)"
+        return "Sem alteração (↔)"
 
-tab["VISTORIADOR"] = tab.apply(lambda r: _pick(r.get("S1_VISTORIADOR",""),
-                                               r.get("S2_VISTORIADOR",""),
-                                               r.get("S3_VISTORIADOR","")), axis=1)
+    for i in range(1, k):  # S1->S2, S2->S3, ...
+        dcol = f"Δ_%ERRO_S{i}_S{i+1}"
+        tab[dcol] = (tab[f"S{i+1}_%ERRO"] - tab[f"S{i}_%ERRO"]).round(1)
+        tab[f"Status (S{i}→S{i+1})"] = tab[dcol].map(_status_pp)
 
-# Zera NaN numéricos
-num_cols = [c for c in tab.columns if c != "VISTORIADOR" and tab[c].dtype.kind in "if"]
-tab[num_cols] = tab[num_cols].fillna(0)
+    # Tendência: últimas 3 semanas (se houver 3+)
+    def _status3(p1, p2, p3):
+        if any(pd.isna([p1, p2, p3])): return "—"
+        d12 = p2 - p1; d23 = p3 - p2
+        if d12 < 0 and d23 < 0: return "Continua melhorando (↓↓)"
+        if d12 > 0 and d23 > 0: return "Continua piorando (↑↑)"
+        if d12 < 0 and d23 > 0: return "Melhorou e depois piorou (↓↑)"
+        if d12 > 0 and d23 < 0: return "Piorou e depois melhorou (↑↓)"
+        return "Sem alteração (↔↔)"
 
-# ---- 4) Status entre semanas e tendência
-tab["Δ_%ERRO_S1_S2"] = (tab.get("S2_%ERRO") - tab.get("S1_%ERRO")).round(1)
-tab["Δ_%ERRO_S2_S3"] = (tab.get("S3_%ERRO") - tab.get("S2_%ERRO")).round(1)
+    if k >= 3:
+        tab["Status (3-semanas)"] = [
+            _status3(r.get(f"S{k-2}_%ERRO", np.nan), r.get(f"S{k-1}_%ERRO", np.nan), r.get(f"S{k}_%ERRO", np.nan))
+            for _, r in tab.iterrows()
+        ]
 
-def _status_pp(delta):
-    if pd.isna(delta): return "—"
-    if delta < 0:     return f"Melhorou (↓ {abs(delta):.1f} pp)".replace(".", ",")
-    if delta > 0:     return f"Piorou (↑ {delta:.1f} pp)".replace(".", ",")
-    return "Sem alteração (↔)"
+    # -------- Monta a tabela final na ordem: semanas (S1..Sk) + deltas + status
+    def _fmt_pct(x): return "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ",")
+    def _fmt_pp(x):  return "—" if pd.isna(x) else f"{x:.1f} pp".replace(".", ",")
 
-tab["Status (S1→S2)"] = tab["Δ_%ERRO_S1_S2"].map(_status_pp)
-tab["Status (S2→S3)"] = tab["Δ_%ERRO_S2_S3"].map(_status_pp)
+    cols = ["VISTORIADOR"]
+    for i in range(1, k+1):
+        cols += [f"S{i}_ERROS", f"S{i}_%ERRO", f"S{i}_ERROS_GG", f"S{i}_%ERRO_GG"]
 
-def _status3(p1, p2, p3):
-    if any(pd.isna([p1, p2, p3])): return "—"
-    d12 = p2 - p1
-    d23 = p3 - p2
-    if d12 < 0 and d23 < 0: return "Continua melhorando (↓↓)"
-    if d12 > 0 and d23 > 0: return "Continua piorando (↑↑)"
-    if d12 < 0 and d23 > 0: return "Melhorou e depois piorou (↓↑)"
-    if d12 > 0 and d23 < 0: return "Piorou e depois melhorou (↑↓)"
-    return "Sem alteração (↔↔)"
+    for i in range(1, k):
+        cols += [f"Δ_%ERRO_S{i}_S{i+1}", f"Status (S{i}→S{i+1})"]
 
-tab["Status (3-semanas)"] = [
-    _status3(tab.get("S1_%ERRO").iloc[i], tab.get("S2_%ERRO").iloc[i], tab.get("S3_%ERRO").iloc[i])
-    for i in range(len(tab))
-]
+    if k >= 3:
+        cols += ["Status (3-semanas)"]
 
-# ---- 5) Tabela final (formatação)
-out = tab[[
-    "VISTORIADOR",
-    "S1_ERROS","S1_%ERRO","S1_ERROS_GG","S1_%ERRO_GG",
-    "S2_ERROS","S2_%ERRO","S2_ERROS_GG","S2_%ERRO_GG",
-    "S3_ERROS","S3_%ERRO","S3_ERROS_GG","S3_%ERRO_GG",
-    "Δ_%ERRO_S1_S2","Δ_%ERRO_S2_S3","Status (S1→S2)","Status (S2→S3)","Status (3-semanas)"
-]].copy()
+    out = tab[cols].copy()
 
-for c in ["S1_ERROS","S1_ERROS_GG","S2_ERROS","S2_ERROS_GG","S3_ERROS","S3_ERROS_GG"]:
-    if c in out.columns: out[c] = out[c].fillna(0).astype(int)
+    # Formatação
+    for c in out.columns:
+        if c.endswith("%ERRO") or c.endswith("%ERRO_GG"):
+            out[c] = out[c].map(_fmt_pct)
+        elif c.startswith("Δ_%ERRO_"):
+            out[c] = out[c].map(_fmt_pp)
 
-def _fmt_pct(x): return "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ",")
-for c in ["S1_%ERRO","S1_%ERRO_GG","S2_%ERRO","S2_%ERRO_GG","S3_%ERRO","S3_%ERRO_GG"]:
-    if c in out.columns: out[c] = out[c].map(_fmt_pct)
+    # Ordena pela % da semana MAIS RECENTE (Sk)
+    order_key = tab[f"S{k}_%ERRO"].fillna(-1).values
+    out = out.iloc[np.argsort(-order_key)]
 
-def _fmt_pp(x): return "—" if pd.isna(x) else f"{x:.1f} pp".replace(".", ",")
-for c in ["Δ_%ERRO_S1_S2","Δ_%ERRO_S2_S3"]:
-    if c in out.columns: out[c] = out[c].map(_fmt_pp)
+    # Caption com os intervalos reais das semanas
+    # Ex.: Semana 1: 02/09–08/09 · Semana 2: 09/09–15/09 · Semana 3 (atual): 16/09–22/09
+    legend_parts = []
+    for i, (prefix, di, dfim) in enumerate(meta, start=1):
+        label = f"**Semana {i}**: {di:%d/%m}–{dfim:%d/%m}"
+        if i == k:
+            label = label.replace(f"**Semana {i}**", f"**Semana {i} (atual)**")
+        legend_parts.append(label)
+    st.caption("  ·  ".join(legend_parts))
 
-# Ordena pela semana mais recente (S3)
-ord_key = tab.get("S3_%ERRO", pd.Series([-1]*len(out))).fillna(-1).values
-out = out.iloc[np.argsort(-ord_key)]
-
-st.dataframe(out.reset_index(drop=True), use_container_width=True, hide_index=True)
+    st.dataframe(out.reset_index(drop=True), use_container_width=True, hide_index=True)
 
 # ------------------ RANKINGS ------------------
 st.markdown("---")
@@ -1308,6 +1323,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
