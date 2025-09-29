@@ -855,32 +855,39 @@ with ex1:
 
 with ex2:
     st.markdown('<div class="section">🗺️ Heatmap Cidade × Gravidade</div>', unsafe_allow_html=True)
-     has_cols = ("UNIDADE" in viewQ.columns) and ("GRAVIDADE" in viewQ.columns)
-    if has_cols:
-        # Contagem de erros por (UNIDADE, GRAVIDADE)
-        hm = (
+    if ("UNIDADE" in viewQ.columns) and ("GRAVIDADE" in viewQ.columns):
+        # Erros por UNIDADE x GRAVIDADE
+        erros_city = (
             viewQ.groupby(["UNIDADE", "GRAVIDADE"])["ERRO"]
             .size()
             .reset_index(name="QTD")
         )
 
-        # === denominador: vistorias por cidade (BRUTAS) no mesmo recorte ===
-        # (se quiser líquida, use 'denom_col = "liq"' e crie a coluna liq = vist - rev)
+        # Denominador: vistorias por cidade no mesmo recorte (Bruta/Líquida conforme rádio)
         if not viewP.empty and "UNIDADE" in viewP.columns:
             prod_city = (
-                viewP.groupby("UNIDADE", dropna=False)["IS_REV"]
-                .size()
-                .reset_index(name="VIST")          # vistorias brutas
+                viewP.groupby("UNIDADE", dropna=False)
+                .agg(vist=("IS_REV", "size"), rev=("IS_REV", "sum"))
+                .reset_index()
             )
+            prod_city["liq"] = prod_city["vist"] - prod_city["rev"]
         else:
-            # sem produção, evita divisão por zero
-            prod_city = pd.DataFrame({"UNIDADE": hm["UNIDADE"].unique(), "VIST": 0})
+            prod_city = pd.DataFrame({
+                "UNIDADE": erros_city["UNIDADE"].unique(),
+                "vist": 0, "rev": 0
+            })
+            prod_city["liq"] = 0
 
-        # Junta denominador e calcula % sobre vistorias da cidade
-        hm = hm.merge(prod_city, on="UNIDADE", how="left").fillna({"VIST": 0})
-        hm["PCT_VS_VIST"] = np.where(hm["VIST"] > 0, (hm["QTD"] / hm["VIST"]) * 100, np.nan)
+        denom_col = "liq" if denom_mode.startswith("Líquida") else "vist"
 
-        # Heatmap com tooltip mostrando o % sobre vistorias
+        hm = erros_city.merge(
+            prod_city[["UNIDADE", denom_col]].rename(columns={denom_col: "DEN"}),
+            on="UNIDADE",
+            how="left",
+        )
+        hm["%_VIST"] = np.where(hm["DEN"] > 0, (hm["QTD"] / hm["DEN"]) * 100, np.nan)
+
+        # Heatmap (cor = QTD) + tooltip com % sobre vistorias
         rects = alt.Chart(hm).mark_rect().encode(
             x=alt.X("GRAVIDADE:N", axis=alt.Axis(labelAngle=0, title="GRAVIDADE")),
             y=alt.Y("UNIDADE:N", sort='-x', title="UNIDADE"),
@@ -889,20 +896,22 @@ with ex2:
                 alt.Tooltip("UNIDADE:N", title="UNIDADE"),
                 alt.Tooltip("GRAVIDADE:N", title="GRAVIDADE"),
                 alt.Tooltip("QTD:Q", format=".0f", title="Erros"),
-                alt.Tooltip("VIST:Q", format=".0f", title="Vistorias (cidade)"),
-                alt.Tooltip("PCT_VS_VIST:Q", format=".1f", title="% sobre vistorias"),
+                alt.Tooltip("DEN:Q", format=".0f",
+                            title=f"Vistorias ({'líq.' if denom_col=='liq' else 'brutas'})"),
+                alt.Tooltip("%_VIST:Q", format=".1f", title="% sobre vistorias"),
             ],
         )
 
-        # rótulo com QTD no centro do retângulo
-        texts = alt.Chart(hm).mark_text(baseline="middle").encode(
+        labels = alt.Chart(hm).mark_text(baseline="middle").encode(
             x="GRAVIDADE:N",
             y="UNIDADE:N",
             text=alt.Text("QTD:Q", format=".0f"),
             color=alt.value("#111"),
         )
 
-        st.altair_chart((rects + texts).properties(height=340), use_container_width=True)
+        st.altair_chart((rects + labels).properties(height=340), use_container_width=True)
+    else:
+        st.info("Base sem colunas UNIDADE/GRAVIDADE.")
 
 ex3, ex4 = st.columns(2)
 
@@ -1136,5 +1145,6 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
