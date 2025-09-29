@@ -856,18 +856,37 @@ with ex1:
 with ex2:
     st.markdown('<div class="section">🗺️ Heatmap Cidade × Gravidade</div>', unsafe_allow_html=True)
     if "UNIDADE" in viewQ.columns and "GRAVIDADE" in viewQ.columns:
-        hm = (viewQ.groupby(["UNIDADE","GRAVIDADE"])["ERRO"].size().reset_index(name="QTD"))
+        # base do heatmap
+        hm = (viewQ.groupby(["UNIDADE","GRAVIDADE"])["ERRO"]
+              .size().reset_index(name="QTD"))
+
+        # NOVO: % de erros Grave+Gravíssimo por cidade (na base filtrada)
+        gg_city = (
+            viewQ.assign(_gg=viewQ["GRAVIDADE"].isin(grav_gg).astype(int))
+                 .groupby("UNIDADE")["_gg"].mean()
+                 .reset_index(name="%GG_CIDADE")
+        )
+        gg_city["%GG_CIDADE"] = (gg_city["%GG_CIDADE"] * 100).round(1)
+
+        # agrega no dataset do heatmap para ficar no tooltip
+        hm = hm.merge(gg_city, on="UNIDADE", how="left")
+
         rects = alt.Chart(hm).mark_rect().encode(
             x=alt.X("GRAVIDADE:N", axis=alt.Axis(labelAngle=0, title="GRAVIDADE")),
             y=alt.Y("UNIDADE:N", sort='-x', title="UNIDADE"),
             color=alt.Color("QTD:Q", scale=alt.Scale(scheme="blues")),
-            tooltip=["UNIDADE","GRAVIDADE","QTD"]
+            tooltip=[
+                "UNIDADE", "GRAVIDADE", "QTD",
+                alt.Tooltip("%GG_CIDADE:Q", format=".1f", title="%GG na cidade")
+            ],
         )
         texts = alt.Chart(hm).mark_text(baseline="middle").encode(
-            x="GRAVIDADE:N", y="UNIDADE:N", text=alt.Text("QTD:Q", format=".0f"),
-            color=alt.condition("datum.QTD > 0", alt.value("#111"), alt.value("#111"))
+            x="GRAVIDADE:N", y="UNIDADE:N",
+            text=alt.Text("QTD:Q", format=".0f"),
+            color=alt.condition("datum.QTD > 0", alt.value("#111"), alt.value("#111")),
         )
         st.altair_chart((rects + texts).properties(height=340), use_container_width=True)
+        st.caption("Passe o mouse para ver o **%GG na cidade**.")
 
 ex3, ex4 = st.columns(2)
 
@@ -1101,3 +1120,4 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
