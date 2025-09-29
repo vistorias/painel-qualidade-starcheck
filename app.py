@@ -855,38 +855,54 @@ with ex1:
 
 with ex2:
     st.markdown('<div class="section">🗺️ Heatmap Cidade × Gravidade</div>', unsafe_allow_html=True)
-    if "UNIDADE" in viewQ.columns and "GRAVIDADE" in viewQ.columns:
-        # base do heatmap
-        hm = (viewQ.groupby(["UNIDADE","GRAVIDADE"])["ERRO"]
-              .size().reset_index(name="QTD"))
-
-        # NOVO: % de erros Grave+Gravíssimo por cidade (na base filtrada)
-        gg_city = (
-            viewQ.assign(_gg=viewQ["GRAVIDADE"].isin(grav_gg).astype(int))
-                 .groupby("UNIDADE")["_gg"].mean()
-                 .reset_index(name="%GG_CIDADE")
+     has_cols = ("UNIDADE" in viewQ.columns) and ("GRAVIDADE" in viewQ.columns)
+    if has_cols:
+        # Contagem de erros por (UNIDADE, GRAVIDADE)
+        hm = (
+            viewQ.groupby(["UNIDADE", "GRAVIDADE"])["ERRO"]
+            .size()
+            .reset_index(name="QTD")
         )
-        gg_city["%GG_CIDADE"] = (gg_city["%GG_CIDADE"] * 100).round(1)
 
-        # agrega no dataset do heatmap para ficar no tooltip
-        hm = hm.merge(gg_city, on="UNIDADE", how="left")
+        # === denominador: vistorias por cidade (BRUTAS) no mesmo recorte ===
+        # (se quiser líquida, use 'denom_col = "liq"' e crie a coluna liq = vist - rev)
+        if not viewP.empty and "UNIDADE" in viewP.columns:
+            prod_city = (
+                viewP.groupby("UNIDADE", dropna=False)["IS_REV"]
+                .size()
+                .reset_index(name="VIST")          # vistorias brutas
+            )
+        else:
+            # sem produção, evita divisão por zero
+            prod_city = pd.DataFrame({"UNIDADE": hm["UNIDADE"].unique(), "VIST": 0})
 
+        # Junta denominador e calcula % sobre vistorias da cidade
+        hm = hm.merge(prod_city, on="UNIDADE", how="left").fillna({"VIST": 0})
+        hm["PCT_VS_VIST"] = np.where(hm["VIST"] > 0, (hm["QTD"] / hm["VIST"]) * 100, np.nan)
+
+        # Heatmap com tooltip mostrando o % sobre vistorias
         rects = alt.Chart(hm).mark_rect().encode(
             x=alt.X("GRAVIDADE:N", axis=alt.Axis(labelAngle=0, title="GRAVIDADE")),
             y=alt.Y("UNIDADE:N", sort='-x', title="UNIDADE"),
-            color=alt.Color("QTD:Q", scale=alt.Scale(scheme="blues")),
+            color=alt.Color("QTD:Q", scale=alt.Scale(scheme="blues"), title="QTD"),
             tooltip=[
-                "UNIDADE", "GRAVIDADE", "QTD",
-                alt.Tooltip("%GG_CIDADE:Q", format=".1f", title="%GG na cidade")
+                alt.Tooltip("UNIDADE:N", title="UNIDADE"),
+                alt.Tooltip("GRAVIDADE:N", title="GRAVIDADE"),
+                alt.Tooltip("QTD:Q", format=".0f", title="Erros"),
+                alt.Tooltip("VIST:Q", format=".0f", title="Vistorias (cidade)"),
+                alt.Tooltip("PCT_VS_VIST:Q", format=".1f", title="% sobre vistorias"),
             ],
         )
+
+        # rótulo com QTD no centro do retângulo
         texts = alt.Chart(hm).mark_text(baseline="middle").encode(
-            x="GRAVIDADE:N", y="UNIDADE:N",
+            x="GRAVIDADE:N",
+            y="UNIDADE:N",
             text=alt.Text("QTD:Q", format=".0f"),
-            color=alt.condition("datum.QTD > 0", alt.value("#111"), alt.value("#111")),
+            color=alt.value("#111"),
         )
+
         st.altair_chart((rects + texts).properties(height=340), use_container_width=True)
-        st.caption("Passe o mouse para ver o **%GG na cidade**.")
 
 ex3, ex4 = st.columns(2)
 
@@ -1120,4 +1136,5 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
