@@ -914,14 +914,21 @@ with col_esq:
 with col_dir:
     st.markdown('<div class="section">⚖️ Calibração por analista (% GG)</div>', unsafe_allow_html=True)
     if "ANALISTA" in viewQ.columns and "GRAVIDADE" in viewQ.columns:
-        ana = (viewQ.assign(_gg=viewQ["GRAVIDADE"].isin(grav_gg).astype(int))
-               .groupby("ANALISTA")["_gg"].mean().reset_index(name="%GG")
-               .sort_values("%GG", descending=False))
+        ana = (
+            viewQ.assign(_gg=viewQ["GRAVIDADE"].isin(grav_gg).astype(int))
+                 .groupby("ANALISTA")["_gg"]
+                 .mean()
+                 .reset_index(name="%GG")
+        )
+        # ordenar do maior %GG para o menor
+        ana = ana.sort_values("%GG", ascending=False)
         ana["%GG"] = (ana["%GG"] * 100).round(1)
+
         st.altair_chart(
             alt.Chart(ana).mark_bar().encode(
                 x=alt.X("ANALISTA:N", axis=alt.Axis(labelAngle=0, labelLimit=180)),
-                y=alt.Y("%GG:Q"), tooltip=["ANALISTA", alt.Tooltip("%GG:Q", format=".1f")]
+                y=alt.Y("%GG:Q"),
+                tooltip=["ANALISTA", alt.Tooltip("%GG:Q", format=".1f")]
             ).properties(height=340),
             use_container_width=True,
         )
@@ -1130,3 +1137,4 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
