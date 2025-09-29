@@ -1095,23 +1095,28 @@ st.dataframe(
     use_container_width=True, hide_index=True,
 )
 
-# ------------------ COMPARATIVO SEMANAL (3 semanas + 3 status) ------------------
+# ----- Semanas rolantes: permitir 3 ou 4 -----
 st.markdown("---")
 st.markdown("### 🔵 Comparativo semanal por vistoriador")
+NUM_SEMANAS = st.select_slider("Quantas semanas comparar?", options=[3, 4], value=3)
 
-# S3 = semana atual; S2 = anterior; S1 = 2ª anterior
-S3_end = end_d
-S3_start = (pd.Timestamp(S3_end) - pd.Timedelta(days=6)).date()
-S2_end = (pd.Timestamp(S3_start) - pd.Timedelta(days=1)).date()
-S2_start = (pd.Timestamp(S2_end) - pd.Timedelta(days=6)).date()
-S1_end = (pd.Timestamp(S2_start) - pd.Timedelta(days=1)).date()
-S1_start = (pd.Timestamp(S1_end) - pd.Timedelta(days=6)).date()
+# constrói ranges de semanas para trás a partir do fim selecionado (end_d)
+def week_range_ending(d_end):
+    d_start = (pd.Timestamp(d_end) - pd.Timedelta(days=6)).date()
+    return d_start, d_end
 
-st.caption(
-    f"**Semana 1**: {S1_start:%d/%m}–{S1_end:%d/%m}  ·  "
-    f"**Semana 2**: {S2_start:%d/%m}–{S2_end:%d/%m}  ·  "
-    f"**Semana 3 (atual)**: {S3_start:%d/%m}–{S3_end:%d/%m}"
-)
+# gera S1..SN (S{N} = atual; S1 = mais antiga no recorte)
+weeks = []
+d_end = end_d
+for k in range(NUM_SEMANAS, 0, -1):
+    d_ini, d_fim = week_range_ending(d_end)
+    weeks.append((f"S{k}", d_ini, d_fim))
+    # próxima semana termina no dia anterior ao início desta
+    d_end = (pd.Timestamp(d_ini) - pd.Timedelta(days=1)).date()
+
+# legenda
+leg = "  ·  ".join([f"**{label.replace('S','Semana ')}**: {di:%d/%m}–{df:%d/%m}" for label, di, df in weeks])
+st.caption(leg)
 
 def _slice_q(df, di, dfim):
     d = pd.to_datetime(df["DATA"], errors="coerce").dt.date
@@ -1123,119 +1128,90 @@ def _slice_p(df, di, dfim):
 
 def _pct_week(qdf, pdf):
     grav_gg = {"GRAVE", "GRAVISSIMO", "GRAVÍSSIMO"}
-
-    # Qualidade
-    if qdf.empty:
-        qual = pd.DataFrame(columns=["VISTORIADOR","ERROS","ERROS_GG"])
-    else:
-        qual = (qdf.groupby("VISTORIADOR", dropna=False)
-                .agg(ERROS=("ERRO","size"),
-                     ERROS_GG=("GRAVIDADE", lambda s: s.isin(grav_gg).sum()))
-                .reset_index())
-
-    # Produção
-    if pdf.empty:
-        prod = pd.DataFrame(columns=["VISTORIADOR","vist","rev","liq"])
-    else:
-        prod = (pdf.groupby("VISTORIADOR", dropna=False)
-                .agg(vist=("IS_REV","size"), rev=("IS_REV","sum"))
-                .reset_index())
-        prod["liq"] = prod["vist"] - prod["rev"]
-
+    qual = (qdf.groupby("VISTORIADOR", dropna=False)
+              .agg(ERROS=("ERRO","size"),
+                   ERROS_GG=("GRAVIDADE", lambda s: s.isin(grav_gg).sum()))
+              .reset_index()) if not qdf.empty else pd.DataFrame(columns=["VISTORIADOR","ERROS","ERROS_GG"])
+    prod = (pdf.groupby("VISTORIADOR", dropna=False)
+              .agg(vist=("IS_REV","size"), rev=("IS_REV","sum"))
+              .reset_index()) if not pdf.empty else pd.DataFrame(columns=["VISTORIADOR","vist","rev"])
+    if "rev" in prod: prod["liq"] = prod["vist"] - prod["rev"]
     den_col = "liq" if denom_mode.startswith("Líquida") else "vist"
     out = prod.merge(qual, on="VISTORIADOR", how="outer").fillna(0)
     den = out[den_col].replace({0: np.nan})
-
     out["%ERRO"]    = (out["ERROS"]    / den * 100).round(1)
     out["%ERRO_GG"] = (out["ERROS_GG"] / den * 100).round(1)
     out["DEN"] = out[den_col].fillna(0).astype(int)
     return out[["VISTORIADOR","ERROS","%ERRO","ERROS_GG","%ERRO_GG","DEN"]]
 
-def _make_week_block(di, dfim, prefix):
+# calcula por semana e junta
+from functools import reduce
+frames = []
+for label, di, dfim in weeks:
     q = _slice_q(viewQ, di, dfim)
     p = _slice_p(viewP, di, dfim)
-    return _pct_week(q, p).add_prefix(prefix)
+    frames.append(_pct_week(q, p).add_prefix(f"{label}_"))
 
-wk1 = _make_week_block(S1_start, S1_end, "S1_")  # mais antiga
-wk2 = _make_week_block(S2_start, S2_end, "S2_")  # intermediária
-wk3 = _make_week_block(S3_start, S3_end, "S3_")  # atual
+tab = reduce(lambda l, r: l.merge(r, left_on=f"{weeks[0][0]}_VISTORIADOR",
+                                  right_on=f"{weeks[1][0]}_VISTORIADOR", how="outer"), frames)
 
-tab = (
-    wk1.merge(wk2, left_on="S1_VISTORIADOR", right_on="S2_VISTORIADOR", how="outer")
-       .merge(wk3, left_on="S1_VISTORIADOR", right_on="S3_VISTORIADOR", how="outer")
-)
-
-def _pick(a, b, c):
-    for v in (a, b, c):
-        if isinstance(v, str) and v.strip() != "":
-            return v
+# coluna VISTORIADOR
+def _pick(*vals):
+    for v in vals:
+        if isinstance(v, str) and v.strip(): return v
     return ""
+vist_cols = [f"{lbl}_VISTORIADOR" for lbl, _, _ in weeks]
+tab["VISTORIADOR"] = tab.apply(lambda r: _pick(*[r.get(c,"") for c in vist_cols]), axis=1)
+tab.drop(columns=[c for c in vist_cols if c in tab.columns], inplace=True)
 
-tab["VISTORIADOR"] = tab.apply(lambda r: _pick(r.get("S1_VISTORIADOR",""),
-                                               r.get("S2_VISTORIADOR",""),
-                                               r.get("S3_VISTORIADOR","")), axis=1)
-
-# Zera NaN numéricos
-num_cols = [c for c in tab.columns if c != "VISTORIADOR" and tab[c].dtype.kind in "if"]
-tab[num_cols] = tab[num_cols].fillna(0)
-
-# -------- Status 1 (S1→S2) e Status 2 (S2→S3) em pontos percentuais
-tab["Δ_%ERRO_S1_S2"] = (tab["S2_%ERRO"] - tab["S1_%ERRO"]).round(1)
-tab["Δ_%ERRO_S2_S3"] = (tab["S3_%ERRO"] - tab["S2_%ERRO"]).round(1)
-
-def _status_pp(delta):
-    if pd.isna(delta): return "—"
-    if delta < 0:     return f"Melhorou (↓ {abs(delta):.1f} pp)"
-    if delta > 0:     return f"Piorou (↑ {delta:.1f} pp)"
+# -------- Status entre semanas adjacentes + tendência N-semanas
+def _status_pp(d):
+    if pd.isna(d): return "—"
+    if d < 0: return f"Melhorou (↓ {abs(d):.1f} pp)".replace(".", ",")
+    if d > 0: return f"Piorou (↑ {d:.1f} pp)".replace(".", ",")
     return "Sem alteração (↔)"
 
-tab["Status (S1→S2)"] = tab["Δ_%ERRO_S1_S2"].map(_status_pp)
-tab["Status (S2→S3)"] = tab["Δ_%ERRO_S2_S3"].map(_status_pp)
+# deltas em pp e status para últimos pares (S1→S2, S2→S3, [S3→S4 se existir])
+for i in range(1, NUM_SEMANAS):
+    a, b = f"S{i}", f"S{i+1}"
+    tab[f"Δ_%ERRO_{a}_{b}"] = (tab[f"{b}_%ERRO"] - tab[f"{a}_%ERRO"]).round(1)
+    tab[f"Status ({a}→{b})"] = tab[f"Δ_%ERRO_{a}_{b}"].map(_status_pp)
 
-# -------- Status 3 (tendência 3-semanas)
-def _status3(p1, p2, p3):
-    if any(pd.isna([p1, p2, p3])): return "—"
-    d12 = p2 - p1
-    d23 = p3 - p2
-    if d12 < 0 and d23 < 0: return "Continua melhorando (↓↓)"
-    if d12 > 0 and d23 > 0: return "Continua piorando (↑↑)"
-    if d12 < 0 and d23 > 0: return "Melhorou e depois piorou (↓↑)"
-    if d12 > 0 and d23 < 0: return "Piorou e depois melhorou (↑↓)"
-    return "Sem alteração (↔↔)"
+def _trend_status(pcts):
+    if any(pd.isna(pcts)): return "—"
+    moves = np.sign(np.diff(pcts))
+    if np.all(moves < 0): return "Continua melhorando (↓↓)"
+    if np.all(moves > 0): return "Continua piorando (↑↑)"
+    if moves[-2] < 0 and moves[-1] > 0: return "Melhorou e depois piorou (↓↑)"
+    if moves[-2] > 0 and moves[-1] < 0: return "Piorou e depois melhorou (↑↓)"
+    return "Sem padrão claro (↔)"
 
-tab["Status (3-semanas)"] = [
-    _status3(r.get("S1_%ERRO", np.nan), r.get("S2_%ERRO", np.nan), r.get("S3_%ERRO", np.nan))
-    for _, r in tab.iterrows()
-]
+tab["Status (tendência)"] = tab[[f"S{i}_%ERRO" for i in range(1, NUM_SEMANAS+1)]].apply(
+    lambda r: _trend_status(r.values.astype(float)), axis=1
+)
 
-# -------- Tabela final (números + % com vírgula)
-out = tab[[
-    "VISTORIADOR",
-    "S1_ERROS","S1_%ERRO","S1_ERROS_GG","S1_%ERRO_GG",
-    "S2_ERROS","S2_%ERRO","S2_ERROS_GG","S2_%ERRO_GG",
-    "S3_ERROS","S3_%ERRO","S3_ERROS_GG","S3_%ERRO_GG",
-    "Δ_%ERRO_S1_S2","Δ_%ERRO_S2_S3","Status (S1→S2)","Status (S2→S3)","Status (3-semanas)"
-]].copy()
+# monta tabela final com colunas por semana S1..S{N}
+cols = ["VISTORIADOR"]
+for i in range(1, NUM_SEMANAS+1):
+    cols += [f"S{i}_ERROS", f"S{i}_%ERRO", f"S{i}_ERROS_GG", f"S{i}_%ERRO_GG"]
+for i in range(1, NUM_SEMANAS):
+    cols += [f"Δ_%ERRO_S{i}_S{i+1}", f"Status (S{i}→S{i+1})"]
+cols += ["Status (tendência)"]
 
-for c in ["S1_ERROS","S1_ERROS_GG","S2_ERROS","S2_ERROS_GG","S3_ERROS","S3_ERROS_GG"]:
-    if c in out.columns: out[c] = out[c].astype(int)
+out = tab[cols].copy()
 
-def _fmt_pct(x):
-    return "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ",")
+# formatações
+for c in [c for c in out.columns if c.endswith("_ERROS") or c.endswith("_ERROS_GG")]:
+    out[c] = out[c].fillna(0).astype(int)
+def _fmt_pct(x): return "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ",")
+for c in [c for c in out.columns if c.endswith("%ERRO")]:
+    out[c] = out[c].map(_fmt_pct)
+def _fmt_pp(x): return "—" if pd.isna(x) else f"{x:.1f} pp".replace(".", ",")
+for c in [c for c in out.columns if c.startswith("Δ_%ERRO_")]:
+    out[c] = out[c].map(_fmt_pp)
 
-for c in ["S1_%ERRO","S1_%ERRO_GG","S2_%ERRO","S2_%ERRO_GG","S3_%ERRO","S3_%ERRO_GG"]:
-    if c in out.columns: out[c] = out[c].map(_fmt_pct)
-
-def _fmt_pp(x):
-    return "—" if pd.isna(x) else f"{x:.1f} pp".replace(".", ",")
-
-for c in ["Δ_%ERRO_S1_S2","Δ_%ERRO_S2_S3"]:
-    if c in out.columns: out[c] = out[c].map(_fmt_pp)
-
-# Ordena por %ERRO da semana atual (S3) desc
-order_key = tab["S3_%ERRO"].fillna(-1).values
-out = out.iloc[np.argsort(-order_key)]
-
+# ordena por semana atual (SN)
+out = out.sort_values(by=[f"S{NUM_SEMANAS}_%ERRO"], ascending=False, na_position="last")
 st.dataframe(out.reset_index(drop=True), use_container_width=True, hide_index=True)
 
 # ------------------ RANKINGS ------------------
@@ -1280,6 +1256,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
