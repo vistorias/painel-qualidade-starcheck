@@ -855,39 +855,42 @@ with ex1:
 
 with ex2:
     st.markdown('<div class="section">🗺️ Heatmap Cidade × Gravidade</div>', unsafe_allow_html=True)
+
+    # Rádio local só para o heatmap (assim evitamos NameError)
+    denom_mode_hm = st.radio(
+        "Denominador do % por cidade",
+        ["Bruta (vistorias)", "Líquida (sem revisadas)"],
+        horizontal=True, index=0, key="denom_hm"
+    )
+
     if ("UNIDADE" in viewQ.columns) and ("GRAVIDADE" in viewQ.columns):
-        # Erros por UNIDADE x GRAVIDADE
+        # Erros por UNIDADE × GRAVIDADE no recorte atual
         erros_city = (
             viewQ.groupby(["UNIDADE", "GRAVIDADE"])["ERRO"]
-            .size()
-            .reset_index(name="QTD")
+                 .size().reset_index(name="QTD")
         )
 
-        # Denominador: vistorias por cidade no mesmo recorte (Bruta/Líquida conforme rádio)
+        # Vistorias (mesmo recorte e filtros)
         if not viewP.empty and "UNIDADE" in viewP.columns:
             prod_city = (
                 viewP.groupby("UNIDADE", dropna=False)
-                .agg(vist=("IS_REV", "size"), rev=("IS_REV", "sum"))
-                .reset_index()
+                     .agg(vist=("IS_REV","size"), rev=("IS_REV","sum"))
+                     .reset_index()
             )
             prod_city["liq"] = prod_city["vist"] - prod_city["rev"]
         else:
-            prod_city = pd.DataFrame({
-                "UNIDADE": erros_city["UNIDADE"].unique(),
-                "vist": 0, "rev": 0
-            })
-            prod_city["liq"] = 0
+            # Sem produção no recorte — evita merge vazio
+            prod_city = pd.DataFrame({"UNIDADE": erros_city["UNIDADE"].unique(),
+                                      "vist": 0, "rev": 0, "liq": 0})
 
-        denom_col = "liq" if denom_mode.startswith("Líquida") else "vist"
+        denom_col = "liq" if denom_mode_hm.startswith("Líquida") else "vist"
 
         hm = erros_city.merge(
             prod_city[["UNIDADE", denom_col]].rename(columns={denom_col: "DEN"}),
-            on="UNIDADE",
-            how="left",
+            on="UNIDADE", how="left"
         )
         hm["%_VIST"] = np.where(hm["DEN"] > 0, (hm["QTD"] / hm["DEN"]) * 100, np.nan)
 
-        # Heatmap (cor = QTD) + tooltip com % sobre vistorias
         rects = alt.Chart(hm).mark_rect().encode(
             x=alt.X("GRAVIDADE:N", axis=alt.Axis(labelAngle=0, title="GRAVIDADE")),
             y=alt.Y("UNIDADE:N", sort='-x', title="UNIDADE"),
@@ -903,17 +906,14 @@ with ex2:
         )
 
         labels = alt.Chart(hm).mark_text(baseline="middle").encode(
-            x="GRAVIDADE:N",
-            y="UNIDADE:N",
+            x="GRAVIDADE:N", y="UNIDADE:N",
             text=alt.Text("QTD:Q", format=".0f"),
-            color=alt.value("#111"),
+            color=alt.value("#111")
         )
 
         st.altair_chart((rects + labels).properties(height=340), use_container_width=True)
     else:
         st.info("Base sem colunas UNIDADE/GRAVIDADE.")
-
-ex3, ex4 = st.columns(2)
 
 with ex3:
     st.markdown('<div class="section">♻️ Reincidência por vistoriador (≥3)</div>', unsafe_allow_html=True)
@@ -1145,6 +1145,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
