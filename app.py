@@ -577,6 +577,12 @@ cards_html = """
 )
 st.markdown(cards_html, unsafe_allow_html=True)
 
+# ------------------ BASE BRUTA x LÍQUIDA (global p/ heatmap e %Erro) ------------------
+denom_mode = st.radio(
+    "Base para %Erro (usada no heatmap e na tabela de % por vistoriador)",
+    ["Bruta (recomendado)", "Líquida"],
+    horizontal=True, index=0, key="denom_mode_global"
+)
 
 # ------------------ HOJE x ONTEM (ATÉ AGORA) ------------------
 st.markdown('<div class="section">⏱️ Hoje vs Ontem (até agora)</div>', unsafe_allow_html=True)
@@ -744,26 +750,6 @@ if "GRAVIDADE" in viewQ.columns:
             st.altair_chart(bar_with_labels(by_grav, "GRAVIDADE", "QTD", x_title="GRAVIDADE", height=340),
                             use_container_width=True)
 
-c3, c4 = st.columns(2)
-
-if "ANALISTA" in viewQ.columns:
-    with c3:
-        st.markdown('<div class="section">🧑‍💻 Erros por analista</div>', unsafe_allow_html=True)
-        by_ana = (viewQ.groupby("ANALISTA", dropna=False)["ERRO"]
-                  .size().reset_index(name="QTD").sort_values("QTD", ascending=False))
-        if len(by_ana):
-            st.altair_chart(bar_with_labels(by_ana, "ANALISTA", "QTD", x_title="ANALISTA"),
-                            use_container_width=True)
-
-with c4:
-    st.markdown('<div class="section">🏷️ Top 5 erros</div>', unsafe_allow_html=True)
-    top5 = (viewQ.groupby("ERRO", dropna=False)["ERRO"]
-            .size().reset_index(name="QTD").sort_values("QTD", ascending=False).head(5))
-    if len(top5):
-        st.altair_chart(bar_with_labels(top5, "ERRO", "QTD", x_title="ERRO"),
-                        use_container_width=True)
-
-
 # ------------------ VISUALIZAÇÕES EXTRAS ------------------
 ex1, ex2 = st.columns(2)
 
@@ -855,42 +841,41 @@ with ex1:
 
 with ex2:
     st.markdown('<div class="section">🗺️ Heatmap Cidade × Gravidade</div>', unsafe_allow_html=True)
-
-    # Rádio local só para o heatmap (assim evitamos NameError)
-    denom_mode_hm = st.radio(
-        "Denominador do % por cidade",
-        ["Bruta (vistorias)", "Líquida (sem revisadas)"],
-        horizontal=True, index=0, key="denom_hm"
-    )
-
     if ("UNIDADE" in viewQ.columns) and ("GRAVIDADE" in viewQ.columns):
-        # Erros por UNIDADE × GRAVIDADE no recorte atual
+        # Erros por UNIDADE x GRAVIDADE
         erros_city = (
             viewQ.groupby(["UNIDADE", "GRAVIDADE"])["ERRO"]
-                 .size().reset_index(name="QTD")
+            .size()
+            .reset_index(name="QTD")
         )
 
-        # Vistorias (mesmo recorte e filtros)
+        # Denominador: vistorias por cidade no mesmo recorte (Bruta/Líquida conforme rádio)
         if not viewP.empty and "UNIDADE" in viewP.columns:
             prod_city = (
                 viewP.groupby("UNIDADE", dropna=False)
-                     .agg(vist=("IS_REV","size"), rev=("IS_REV","sum"))
-                     .reset_index()
+                .agg(vist=("IS_REV", "size"), rev=("IS_REV", "sum"))
+                .reset_index()
             )
             prod_city["liq"] = prod_city["vist"] - prod_city["rev"]
         else:
-            # Sem produção no recorte — evita merge vazio
-            prod_city = pd.DataFrame({"UNIDADE": erros_city["UNIDADE"].unique(),
-                                      "vist": 0, "rev": 0, "liq": 0})
+            prod_city = pd.DataFrame({
+                "UNIDADE": erros_city["UNIDADE"].unique(),
+                "vist": 0, "rev": 0
+            })
+            prod_city["liq"] = 0
 
-        denom_col = "liq" if denom_mode_hm.startswith("Líquida") else "vist"
+        denom_col = "liq" if denom_mode.startswith("Líquida") else "vist"
 
         hm = erros_city.merge(
             prod_city[["UNIDADE", denom_col]].rename(columns={denom_col: "DEN"}),
-            on="UNIDADE", how="left"
+            on="UNIDADE",
+            how="left",
         )
         hm["%_VIST"] = np.where(hm["DEN"] > 0, (hm["QTD"] / hm["DEN"]) * 100, np.nan)
+        # versão textual para tooltip com % e vírgula
+        hm["%_VIST_TXT"] = hm["%_VIST"].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ","))
 
+        # Heatmap (cor = QTD) + tooltip com % sobre vistorias
         rects = alt.Chart(hm).mark_rect().encode(
             x=alt.X("GRAVIDADE:N", axis=alt.Axis(labelAngle=0, title="GRAVIDADE")),
             y=alt.Y("UNIDADE:N", sort='-x', title="UNIDADE"),
@@ -901,33 +886,37 @@ with ex2:
                 alt.Tooltip("QTD:Q", format=".0f", title="Erros"),
                 alt.Tooltip("DEN:Q", format=".0f",
                             title=f"Vistorias ({'líq.' if denom_col=='liq' else 'brutas'})"),
-                alt.Tooltip("%_VIST:Q", format=".1f", title="% sobre vistorias"),
+                alt.Tooltip("%_VIST_TXT:N", title="% sobre vistorias"),
             ],
         )
 
         labels = alt.Chart(hm).mark_text(baseline="middle").encode(
-            x="GRAVIDADE:N", y="UNIDADE:N",
+            x="GRAVIDADE:N",
+            y="UNIDADE:N",
             text=alt.Text("QTD:Q", format=".0f"),
-            color=alt.value("#111")
+            color=alt.value("#111"),
         )
 
         st.altair_chart((rects + labels).properties(height=340), use_container_width=True)
     else:
         st.info("Base sem colunas UNIDADE/GRAVIDADE.")
 
-with ex3:
+# ------------------ TABELAS EXTRAS ------------------
+col_esq, col_dir = st.columns(2)
+
+with col_esq:
     st.markdown('<div class="section">♻️ Reincidência por vistoriador (≥3)</div>', unsafe_allow_html=True)
     rec = (viewQ.groupby(["VISTORIADOR","ERRO"])["ERRO"]
            .size().reset_index(name="QTD").sort_values("QTD", ascending=False))
     rec = rec[rec["QTD"] >= 3]
     st.dataframe(rec, use_container_width=True, hide_index=True)
 
-with ex4:
+with col_dir:
     st.markdown('<div class="section">⚖️ Calibração por analista (% GG)</div>', unsafe_allow_html=True)
     if "ANALISTA" in viewQ.columns and "GRAVIDADE" in viewQ.columns:
         ana = (viewQ.assign(_gg=viewQ["GRAVIDADE"].isin(grav_gg).astype(int))
                .groupby("ANALISTA")["_gg"].mean().reset_index(name="%GG")
-               .sort_values("%GG", ascending=False))
+               .sort_values("%GG", descending=False))
         ana["%GG"] = (ana["%GG"] * 100).round(1)
         st.altair_chart(
             alt.Chart(ana).mark_bar().encode(
@@ -950,7 +939,8 @@ if not dow_df.empty:
 # ------------------ % ERRO (casamento com Produção) ------------------
 st.markdown("---")
 st.markdown('<div class="section">📐 % de erro por vistoriador</div>', unsafe_allow_html=True)
-denom_mode = st.radio("Base para %Erro", ["Bruta (recomendado)", "Líquida"], horizontal=True, index=0)
+# reutiliza a escolha feita no rádio acima
+denom_mode = st.session_state.get("denom_mode_global", "Bruta (recomendado)")
 
 if not viewP.empty:
     prod = (viewP.groupby("VISTORIADOR", dropna=False)
@@ -982,11 +972,6 @@ st.dataframe(fmt[show_cols], use_container_width=True, hide_index=True)
 st.markdown("---")
 st.markdown('<div class="section">📈 Tendência de erros (projeção até o fim do mês)</div>', unsafe_allow_html=True)
 
-# (já calculamos month_start, month_end, dias_passados, dias_totais_fallback e mtd acima)
-# Se quiser usar os DIAS_UTEIS da METAS como base agregada, substitua dias_totais_fallback
-# por, por exemplo, metas_cur["DIAS_UTEIS"].median() ou .mode/dropna etc.
-
-# MTD com os mesmos filtros já está em mtd_all; agora por vistoriador como antes:
 mtd = mtd_all.copy()
 erros_mtd = (mtd.groupby("VISTORIADOR", dropna=False)["ERRO"]
              .size().reset_index(name="ERROS_MTD"))
@@ -1145,7 +1130,3 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
-
-
-
-
