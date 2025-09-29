@@ -1095,6 +1095,97 @@ st.dataframe(
     use_container_width=True, hide_index=True,
 )
 
+# ------------------ COMPARATIVO SEMANAL ------------------
+st.markdown("---")
+st.markdown('<div class="section">📆 Comparativo semanal por vistoriador</div>', unsafe_allow_html=True)
+
+# Semanas: atual termina em end_d
+week_cur_end = end_d
+week_cur_ini = (pd.Timestamp(week_cur_end) - pd.Timedelta(days=6)).date()
+week_prev_end = (pd.Timestamp(week_cur_ini) - pd.Timedelta(days=1)).date()
+week_prev_ini = (pd.Timestamp(week_prev_end) - pd.Timedelta(days=6)).date()
+
+def _slice_qual(dini: date, dfim: date) -> pd.DataFrame:
+    base = dfQ.copy()
+    base["_DT_"] = pd.to_datetime(base["DATA"], errors="coerce").dt.date
+    base = base[base["_DT_"].between(dini, dfim)]
+    if "UNIDADE" in base.columns and len(f_unids):
+        base = base[base["UNIDADE"].isin([_upper(u) for u in f_unids])]
+    if "VISTORIADOR" in base.columns and len(f_vists):
+        base = base[base["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+    return base
+
+def _slice_prod(dini: date, dfim: date) -> pd.DataFrame:
+    if dfP.empty:
+        return pd.DataFrame(columns=["VISTORIADOR","vist","rev","liq"])
+    base = dfP.copy()
+    _d = pd.to_datetime(base["__DATA__"], errors="coerce").dt.date
+    base = base[_d.between(dini, dfim)]
+    if "UNIDADE" in base.columns and len(f_unids):
+        base = base[base["UNIDADE"].isin([_upper(u) for u in f_unids])]
+    if "VISTORIADOR" in base.columns and len(f_vists):
+        base = base[base["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+    g = (base.groupby("VISTORIADOR", dropna=False)
+              .agg(vist=("IS_REV","size"), rev=("IS_REV","sum")).reset_index())
+    g["liq"] = g["vist"] - g["rev"]
+    return g
+
+def _weekly_table(dini: date, dfim: date, label: str) -> pd.DataFrame:
+    grav_gg = {"GRAVE","GRAVISSIMO","GRAVÍSSIMO"}
+    q = _slice_qual(dini, dfim)
+    p = _slice_prod(dini, dfim)
+
+    qual = (q.groupby("VISTORIADOR", dropna=False)
+              .agg(erros=("ERRO","size"),
+                   erros_gg=("GRAVIDADE", lambda s: s.isin(grav_gg).sum()))
+              .reset_index())
+
+    base = p.merge(qual, on="VISTORIADOR", how="outer").fillna(0)
+    den = base["liq"] if denom_mode.startswith("Líquida") else base["vist"]
+    base[f"%ERRO_{label}"]    = np.where(den > 0, base["erros"]    / den, np.nan)
+    base[f"%ERRO_GG_{label}"] = np.where(den > 0, base["erros_gg"] / den, np.nan)
+    base = base.rename(columns={
+        "erros":    f"ERROS_{label}",
+        "erros_gg": f"ERROS_GG_{label}",
+    })
+    return base[["VISTORIADOR",
+                 f"ERROS_{label}", f"%ERRO_{label}",
+                 f"ERROS_GG_{label}", f"%ERRO_GG_{label}"]]
+
+sem_atual = _weekly_table(week_cur_ini, week_cur_end, "SEM_ATUAL")
+sem_ant   = _weekly_table(week_prev_ini, week_prev_end, "SEM_ANT")
+
+tab = sem_ant.merge(sem_atual, on="VISTORIADOR", how="outer")
+
+tab["Δ_ERROS"] = tab["ERROS_SEM_ATUAL"].fillna(0) - tab["ERROS_SEM_ANT"].fillna(0)
+tab["VAR_%"] = np.where(tab["ERROS_SEM_ANT"].fillna(0) > 0,
+                        tab["Δ_ERROS"] / tab["ERROS_SEM_ANT"].replace({0: np.nan}),
+                        np.nan)
+
+# -------- Formatação bonita --------
+fmt = tab.copy()
+
+for c in ["ERROS_SEM_ATUAL","ERROS_SEM_ANT","ERROS_GG_SEM_ATUAL","ERROS_GG_SEM_ANT","Δ_ERROS"]:
+    if c in fmt.columns: fmt[c] = fmt[c].fillna(0).astype(int)
+
+for c in ["%ERRO_SEM_ATUAL","%ERRO_GG_SEM_ATUAL","%ERRO_SEM_ANT","%ERRO_GG_SEM_ANT","VAR_%"]:
+    if c in fmt.columns:
+        fmt[c] = fmt[c].map(lambda x: "—" if pd.isna(x) else f"{x*100:.1f}%".replace(".", ","))
+
+st.caption(
+    f"Atual: **{week_cur_ini:%d/%m}–{week_cur_end:%d/%m}**  •  "
+    f"Anterior: **{week_prev_ini:%d/%m}–{week_prev_end:%d/%m}**"
+)
+
+cols_show = [
+    "VISTORIADOR",
+    "ERROS_SEM_ANT","%ERRO_SEM_ANT","ERROS_GG_SEM_ANT","%ERRO_GG_SEM_ANT",
+    "ERROS_SEM_ATUAL","%ERRO_SEM_ATUAL","ERROS_GG_SEM_ATUAL","%ERRO_GG_SEM_ATUAL",
+    "Δ_ERROS","VAR_%"
+]
+st.dataframe(fmt[cols_show].sort_values("ERROS_SEM_ATUAL", ascending=False),
+             use_container_width=True, hide_index=True)
+
 # ------------------ RANKINGS ------------------
 st.markdown("---")
 st.markdown('<div class="section">🏁 Top 5 melhores × piores (por % de erro)</div>', unsafe_allow_html=True)
@@ -1137,4 +1228,5 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
