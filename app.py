@@ -883,11 +883,10 @@ with ex2:
 
         denom_col = "liq" if denom_mode.startswith("Líquida") else "vist"
 
-        hm = erros_city.merge(
-            prod_city[["UNIDADE", denom_col]].rename(columns={denom_col: "DEN"]),
-            on="UNIDADE",
-            how="left",
-        )
+       tmp_pc = prod_city[["UNIDADE", denom_col]].copy()
+tmp_pc = tmp_pc.rename(columns={denom_col: "DEN"})
+hm = erros_city.merge(tmp_pc, on="UNIDADE", how="left")
+
         hm["%_VIST"] = np.where(hm["DEN"] > 0, (hm["QTD"] / hm["DEN"]) * 100, np.nan)
         hm["%_VIST_TXT"] = hm["%_VIST"].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ","))
 
@@ -1360,3 +1359,4 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
