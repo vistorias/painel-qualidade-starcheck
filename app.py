@@ -48,6 +48,7 @@ st.markdown(
 
 
 # ------------------ CREDENCIAL ------------------
+@st.cache_resource(show_spinner=False)
 def _get_client_and_drive():
     try:
         block = st.secrets["gcp_service_account"]
@@ -162,6 +163,7 @@ def business_days_count(dini: date, dfim: date) -> int:
 
 
 # ------------------ LEITURA DOS ÍNDICES ------------------
+@st.cache_data(ttl=600, show_spinner=False)
 def read_index(sheet_id: str, tab: str = "ARQUIVOS") -> pd.DataFrame:
     sh = client.open_by_key(sheet_id)
     ws = sh.worksheet(tab)
@@ -177,9 +179,11 @@ def read_index(sheet_id: str, tab: str = "ARQUIVOS") -> pd.DataFrame:
 
 
 # ------------------ FALLBACK XLSX / QUALIDADE ------------------
+@st.cache_data(ttl=3600, show_spinner=False)
 def _drive_get_file_metadata(file_id: str) -> dict:
     return DRIVE.files().get(fileId=file_id, fields="id, name, mimeType").execute()
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def _drive_download_bytes(file_id: str) -> bytes:
     req = DRIVE.files().get_media(fileId=file_id)
     buf = io.BytesIO()
@@ -189,6 +193,7 @@ def _drive_download_bytes(file_id: str) -> bytes:
         status, done = downloader.next_chunk()
     return buf.getvalue()
 
+@st.cache_data(ttl=900, show_spinner=False)
 def read_quality_month(month_id: str) -> Tuple[pd.DataFrame, str]:
     meta = _drive_get_file_metadata(month_id)
     title = meta.get("name", month_id)
@@ -248,6 +253,7 @@ def read_quality_month(month_id: str) -> Tuple[pd.DataFrame, str]:
 
 
 # ------------------ LEITURA / PRODUÇÃO + METAS ------------------
+@st.cache_data(ttl=900, show_spinner=False)
 def read_prod_month(month_sheet_id: str, ym: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
     """Lê a planilha mensal de produção (aba 1) e, se existir, a aba 'METAS'."""
     sh = client.open_by_key(month_sheet_id)
@@ -329,29 +335,30 @@ if sel_meses:
 if sel_meses_p:
     idx_p = idx_p[idx_p["MÊS"].isin(sel_meses_p)]
 
-dq_all, ok_q, er_q = [], [], []
-for _, r in idx_q.iterrows():
-    sid = _sheet_id(r["URL"])
-    if not sid: continue
-    try:
-        dq, ttl = read_quality_month(sid)
-        if not dq.empty: dq_all.append(dq)
-        ok_q.append(f"✅ {ttl} — {len(dq):,} linhas".replace(",", "."))
-    except Exception as e:
-        er_q.append((sid, e))
+with st.spinner("Carregando dados de Qualidade e Produção..."):
+    dq_all, ok_q, er_q = [], [], []
+    for _, r in idx_q.iterrows():
+        sid = _sheet_id(r["URL"])
+        if not sid: continue
+        try:
+            dq, ttl = read_quality_month(sid)
+            if not dq.empty: dq_all.append(dq)
+            ok_q.append(f"✅ {ttl} — {len(dq):,} linhas".replace(",", "."))
+        except Exception as e:
+            er_q.append((sid, e))
 
-dp_all, metas_all, ok_p, er_p = [], [], [], []
-for _, r in idx_p.iterrows():
-    sid = _sheet_id(r["URL"])
-    ym  = _ym_token(r.get("MÊS", ""))
-    if not sid: continue
-    try:
-        dp, dm, ttl = read_prod_month(sid, ym=ym)
-        if not dp.empty:    dp_all.append(dp)
-        if not dm.empty:    metas_all.append(dm)
-        ok_p.append(f"✅ {ttl} — {len(dp):,} linhas")
-    except Exception as e:
-        er_p.append((sid, e))
+    dp_all, metas_all, ok_p, er_p = [], [], [], []
+    for _, r in idx_p.iterrows():
+        sid = _sheet_id(r["URL"])
+        ym  = _ym_token(r.get("MÊS", ""))
+        if not sid: continue
+        try:
+            dp, dm, ttl = read_prod_month(sid, ym=ym)
+            if not dp.empty:    dp_all.append(dp)
+            if not dm.empty:    metas_all.append(dm)
+            ok_p.append(f"✅ {ttl} — {len(dp):,} linhas")
+        except Exception as e:
+            er_p.append((sid, e))
 
 if show_tech:
     if ok_q: st.success("Qualidade conectado em:\n\n- " + "\n- ".join(ok_q))
@@ -457,7 +464,7 @@ total_vist_brutas = int(len(viewP)) if not viewP.empty else 0
 taxa_geral = (total_erros / total_vist_brutas * 100) if total_vist_brutas else np.nan
 taxa_geral_str = "—" if np.isnan(taxa_geral) else f"{taxa_geral:.1f}%".replace(".", ",")
 
-# << adição: taxa_gg_bruta (% de GG sobre vistorias brutas do período)
+# % de GG sobre vistorias brutas do período
 taxa_gg_bruta = (total_gg / total_vist_brutas * 100) if total_vist_brutas else np.nan
 taxa_gg_bruta_str = "—" if np.isnan(taxa_gg_bruta) else f"{taxa_gg_bruta:.1f}%".replace(".", ",")
 
@@ -579,7 +586,7 @@ cards_html = """
     vist_avaliados=f"{vist_avaliados:,}".replace(",", "."),
     media_por_vist=f"{media_por_vist:.1f}".replace(".", ","),
     taxa_geral=taxa_geral_str,
-    taxa_gg_bruta=taxa_gg_bruta_str,  # << adição
+    taxa_gg_bruta=taxa_gg_bruta_str,
     proj_total=f"{proj_total:,}".replace(",", "."),
     proj_gg=f"{proj_gg:,}".replace(",", "."),
     mtd_total=f"{erros_mtd_total:,}".replace(",", "."),
@@ -877,15 +884,13 @@ with ex2:
         denom_col = "liq" if denom_mode.startswith("Líquida") else "vist"
 
         hm = erros_city.merge(
-            prod_city[["UNIDADE", denom_col]].rename(columns={denom_col: "DEN"}),
+            prod_city[["UNIDADE", denom_col]].rename(columns={denom_col: "DEN"]),
             on="UNIDADE",
             how="left",
         )
         hm["%_VIST"] = np.where(hm["DEN"] > 0, (hm["QTD"] / hm["DEN"]) * 100, np.nan)
-        # versão textual para tooltip com % e vírgula
         hm["%_VIST_TXT"] = hm["%_VIST"].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ","))
 
-        # Heatmap (cor = QTD) + tooltip com % sobre vistorias
         rects = alt.Chart(hm).mark_rect().encode(
             x=alt.X("GRAVIDADE:N", axis=alt.Axis(labelAngle=0, title="GRAVIDADE")),
             y=alt.Y("UNIDADE:N", sort='-x', title="UNIDADE"),
@@ -930,7 +935,6 @@ with col_dir:
                  .mean()
                  .reset_index(name="%GG")
         )
-        # ordenar do maior %GG para o menor
         ana = ana.sort_values("%GG", ascending=False)
         ana["%GG"] = (ana["%GG"] * 100).round(1)
 
@@ -1290,6 +1294,57 @@ with c_best:
 with c_worst:
     st.subheader("⚠️ Top 5 piores (maior %Erro)")
     st.dataframe(worst5.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+# ------------------ TOP 5 GRAVES x GRAVÍSSIMOS ------------------
+st.markdown("---")
+st.markdown('<div class="section">🟥 Top 5 erros Graves × Gravíssimos</div>', unsafe_allow_html=True)
+
+if "GRAVIDADE" in viewQ.columns and "ERRO" in viewQ.columns:
+    grav_norm = viewQ["GRAVIDADE"].astype(str).map(_strip_accents).str.upper()
+    tmp = viewQ.assign(_GRAV=grav_norm)
+
+    graves = (tmp[tmp["_GRAV"] == "GRAVE"]
+              .groupby("ERRO")["ERRO"].size()
+              .reset_index(name="QTD")
+              .sort_values("QTD", ascending=False).head(5))
+
+    gravissimos = (tmp[tmp["_GRAV"] == "GRAVISSIMO"]
+                   .groupby("ERRO")["ERRO"].size()
+                   .reset_index(name="QTD")
+                   .sort_values("QTD", ascending=False).head(5))
+
+    cG1, cG2 = st.columns(2)
+
+    def _bar(df, title):
+        if df.empty:
+            st.info(f"Sem ocorrências para **{title}** no período/filtros.")
+            return
+        chart = (
+            alt.Chart(df)
+            .mark_bar()
+            .encode(
+                x=alt.X("ERRO:N",
+                        sort=alt.SortField(field="QTD", order="descending"),
+                        axis=alt.Axis(labelAngle=0, labelLimit=200)),
+                y=alt.Y("QTD:Q", title="QTD"),
+                tooltip=["ERRO", alt.Tooltip("QTD:Q", format=".0f", title="QTD")]
+            )
+            .properties(height=340)
+        )
+        labels = alt.Chart(df).mark_text(dy=-6).encode(
+            x=alt.X("ERRO:N", sort=alt.SortField(field="QTD", order="descending")),
+            y="QTD:Q",
+            text=alt.Text("QTD:Q", format=".0f")
+        )
+        st.subheader(title)
+        st.altair_chart(chart + labels, use_container_width=True)
+
+    with cG1:
+        _bar(graves, "Top 5 — GRAVE")
+    with cG2:
+        _bar(gravissimos, "Top 5 — GRAVÍSSIMO")
+else:
+    st.info("Base sem colunas **GRAVIDADE** e **ERRO** para montar os rankings.")
 
 # ------------------ FRAUDE ------------------
 st.markdown("---")
