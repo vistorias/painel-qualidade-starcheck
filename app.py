@@ -797,10 +797,23 @@ if "GRAVIDADE" in viewQ.columns:
     cG, cGG = st.columns(2)
     with cG:
         st.subheader("Top 5 — GRAVE")
-        st.dataframe(top_grave.reset_index(drop=True), use_container_width=True, hide_index=True)
+        if top_grave.empty:
+            st.info("Sem erros GRAVE no recorte atual.")
+        else:
+            st.altair_chart(
+                bar_with_labels(top_grave, "ERRO", "QTD", x_title="ERRO (GRAVE)", y_title="QTD", height=320),
+                use_container_width=True
+            )
+
     with cGG:
         st.subheader("Top 5 — GRAVÍSSIMO")
-        st.dataframe(top_gravissimo.reset_index(drop=True), use_container_width=True, hide_index=True)
+        if top_gravissimo.empty:
+            st.info("Sem erros GRAVÍSSIMO no recorte atual.")
+        else:
+            st.altair_chart(
+                bar_with_labels(top_gravissimo, "ERRO", "QTD", x_title="ERRO (GRAVÍSSIMO)", y_title="QTD", height=320),
+                use_container_width=True
+            )
 else:
     st.info("Base sem coluna de GRAVIDADE para montar os Top 5.")
 
@@ -1347,3 +1360,4 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
