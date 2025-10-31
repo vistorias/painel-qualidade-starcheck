@@ -1013,82 +1013,104 @@ st.markdown("---")
 st.markdown('<div class="section">📐 % de erro por vistoriador</div>', unsafe_allow_html=True)
 denom_mode = st.session_state.get("denom_mode_global", "Bruta (recomendado)")
 
-# metas e tolerância (em pontos percentuais) para cor amarela
-META_ERRO = 3.5       # % de erros totais
-META_ERRO_GG = 1.5    # % de erros GG (graves + gravíssimos)
-TOL_AMARELO = 0.5     # até +0,5 pp acima da meta = amarelo; acima disso = vermelho
+META_ERRO     = 3.5    # % de erros totais (meta)
+META_ERRO_GG  = 1.5    # % de erros GG (meta)
+TOL_AMARELO   = 0.5    # até +0,5 pp acima da meta = amarelo
 
 def _farol(pct, meta, tol=TOL_AMARELO):
-    """Retorna o emoji do farol para um percentual dado a meta e tolerância."""
-    if pd.isna(pct):
-        return "—"
+    if pd.isna(pct): return "—"
     diff = pct - meta
-    if diff <= 0:
-        return "🟢"   # dentro da meta
-    if diff <= tol:
-        return "🟡"   # acima da meta, mas pouco
-    return "🔴"       # acima da meta, alto
+    if diff <= 0:      return "🟢"
+    if diff <= tol:    return "🟡"
+    return "🔴"
 
-# produção no recorte
-if not viewP.empty:
-    prod = (viewP.groupby("VISTORIADOR", dropna=False)
-            .agg(vist=("IS_REV","size"), rev=("IS_REV","sum"))
-            .reset_index())
-    prod["liq"] = prod["vist"] - prod["rev"]
-else:
-    prod = pd.DataFrame(columns=["VISTORIADOR","vist","rev","liq"])
+# ---- PRODUÇÃO COM FALLBACK ----
+fallback_note = None
 
-# qualidade no recorte
-qual = (viewQ.groupby("VISTORIADOR", dropna=False)
-        .agg(erros=("ERRO","size"),
-             erros_gg=("GRAVIDADE", lambda s: s.isin(grav_gg).sum()))
-        .reset_index())
+def _make_prod(df_prod):
+    if df_prod.empty:
+        return pd.DataFrame(columns=["VISTORIADOR","vist","rev","liq"])
+    out = (
+        df_prod.groupby("VISTORIADOR", dropna=False)
+               .agg(vist=("IS_REV","size"), rev=("IS_REV","sum"))
+               .reset_index()
+    )
+    out["liq"] = out["vist"] - out["rev"]
+    return out
 
-# base unificada
+# 1) produção no recorte atual (viewP)
+prod = _make_prod(viewP)
+
+# 2) se vazia, tenta produção do mês inteiro (sem recorte de data, mas respeitando UNIDADE/VISTORIADOR)
+if prod["vist"].sum() == 0:
+    if not dfP.empty:
+        s_p_dates_all = pd.to_datetime(dfP["__DATA__"], errors="coerce").dt.date
+        mask_mes_all = s_p_dates_all.map(lambda d: isinstance(d, date) and d.year == ref_year and d.month == ref_month)
+        prod_month = dfP[mask_mes_all].copy()
+        if "UNIDADE" in prod_month.columns and len(f_unids):
+            prod_month = prod_month[prod_month["UNIDADE"].isin([_upper(u) for u in f_unids])]
+        if "VISTORIADOR" in prod_month.columns and len(f_vists):
+            prod_month = prod_month[prod_month["VISTORIADOR"].isin([_upper(v) for v in f_vists])]
+        prod = _make_prod(prod_month)
+        if prod["vist"].sum() > 0:
+            fallback_note = "Usando produção do mês (fallback), pois não houve produção no período selecionado."
+
+# 3) se ainda vazia, usa produção global (dfP)
+if prod["vist"].sum() == 0 and not dfP.empty:
+    prod = _make_prod(dfP.copy())
+    fallback_note = "Usando produção global (fallback), pois não há produção no mês/período selecionado."
+
+# ---- QUALIDADE (sempre no recorte atual) ----
+qual = (
+    viewQ.groupby("VISTORIADOR", dropna=False)
+         .agg(erros=("ERRO","size"),
+              erros_gg=("GRAVIDADE", lambda s: s.isin(grav_gg).sum()))
+         .reset_index()
+)
+
+# ---- BASE UNIFICADA ----
 base = prod.merge(qual, on="VISTORIADOR", how="outer").fillna(0)
 
-# denom bruta ou líquida
 den = base["liq"] if denom_mode.startswith("Líquida") else base["vist"]
-base["%ERRO"]    = np.where(den > 0, (base["erros"]    / den) * 100, np.nan).round(1)
-base["%ERRO_GG"] = np.where(den > 0, (base["erros_gg"] / den) * 100, np.nan).round(1)
+den = den.replace({0: np.nan})  # evita divisão por zero
 
-# colunas de farol
+base["%ERRO"]    = ((base["erros"]    / den) * 100).round(1)
+base["%ERRO_GG"] = ((base["erros_gg"] / den) * 100).round(1)
+
+# farol
 base["FAROL_%ERRO"]    = base["%ERRO"].apply(lambda v: _farol(v, META_ERRO))
 base["FAROL_%ERRO_GG"] = base["%ERRO_GG"].apply(lambda v: _farol(v, META_ERRO_GG))
 
-# formatação para exibição
+# formatação
 fmt = base.copy()
 for c in ["vist","rev","liq","erros","erros_gg"]:
-    if c in fmt.columns:
-        fmt[c] = pd.to_numeric(fmt[c], errors="coerce").fillna(0).astype(int)
-
+    fmt[c] = pd.to_numeric(fmt[c], errors="coerce").fillna(0).astype(int)
 fmt["%ERRO"]    = fmt["%ERRO"].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ","))
 fmt["%ERRO_GG"] = fmt["%ERRO_GG"].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ","))
 
-# ordem de colunas (farol ao lado de cada métrica)
 cols_view = [
-    "VISTORIADOR","vist","rev","liq",
-    "erros","erros_gg",
-    "FAROL_%ERRO","%ERRO",
-    "FAROL_%ERRO_GG","%ERRO_GG",
+    "VISTORIADOR","vist","rev","liq","erros","erros_gg",
+    "FAROL_%ERRO","%ERRO","FAROL_%ERRO_GG","%ERRO_GG",
 ]
 
-# largura compacta para as colunas de farol
 st.dataframe(
     fmt[cols_view],
     use_container_width=True,
     hide_index=True,
     column_config={
-        "FAROL_%ERRO":    st.column_config.TextColumn(" ", help="Farol %ERRO", width="small"),
+        "FAROL_%ERRO":    st.column_config.TextColumn(" ",  help="Farol %ERRO",    width="small"),
         "FAROL_%ERRO_GG": st.column_config.TextColumn("  ", help="Farol %ERRO_GG", width="small"),
     },
 )
 
+# legenda + aviso
 with st.expander("Legenda do farol", expanded=False):
     st.write(f"🟢 Dentro da meta · %ERRO ≤ {META_ERRO:.1f}% · %ERRO_GG ≤ {META_ERRO_GG:.1f}%")
     st.write(f"🟡 Até {TOL_AMARELO:.1f} pp acima da meta")
     st.write("🔴 Acima da meta + tolerância")
-
+if fallback_note:
+    st.caption(f"ℹ️ {fallback_note}")
+    
 # ------------------ TENDÊNCIA DE ERROS (projeção) ------------------
 st.markdown("---")
 st.markdown('<div class="section">📈 Tendência de erros (projeção até o fim do mês)</div>', unsafe_allow_html=True)
@@ -1410,6 +1432,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
