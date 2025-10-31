@@ -1013,31 +1013,81 @@ st.markdown("---")
 st.markdown('<div class="section">📐 % de erro por vistoriador</div>', unsafe_allow_html=True)
 denom_mode = st.session_state.get("denom_mode_global", "Bruta (recomendado)")
 
+# metas e tolerância (em pontos percentuais) para cor amarela
+META_ERRO = 3.5       # % de erros totais
+META_ERRO_GG = 1.5    # % de erros GG (graves + gravíssimos)
+TOL_AMARELO = 0.5     # até +0,5 pp acima da meta = amarelo; acima disso = vermelho
+
+def _farol(pct, meta, tol=TOL_AMARELO):
+    """Retorna o emoji do farol para um percentual dado a meta e tolerância."""
+    if pd.isna(pct):
+        return "—"
+    diff = pct - meta
+    if diff <= 0:
+        return "🟢"   # dentro da meta
+    if diff <= tol:
+        return "🟡"   # acima da meta, mas pouco
+    return "🔴"       # acima da meta, alto
+
+# produção no recorte
 if not viewP.empty:
     prod = (viewP.groupby("VISTORIADOR", dropna=False)
-            .agg(vist=("IS_REV","size"), rev=("IS_REV","sum")).reset_index())
+            .agg(vist=("IS_REV","size"), rev=("IS_REV","sum"))
+            .reset_index())
     prod["liq"] = prod["vist"] - prod["rev"]
 else:
     prod = pd.DataFrame(columns=["VISTORIADOR","vist","rev","liq"])
 
+# qualidade no recorte
 qual = (viewQ.groupby("VISTORIADOR", dropna=False)
         .agg(erros=("ERRO","size"),
              erros_gg=("GRAVIDADE", lambda s: s.isin(grav_gg).sum()))
         .reset_index())
 
+# base unificada
 base = prod.merge(qual, on="VISTORIADOR", how="outer").fillna(0)
-den = base["liq"] if denom_mode.startswith("Líquida") else base["vist"]
-base["%ERRO"] = np.where(den > 0, (base["erros"] / den) * 100, np.nan)
-base["%ERRO_GG"] = np.where(den > 0, (base["erros_gg"] / den) * 100, np.nan)
 
-show_cols = ["VISTORIADOR","vist","rev","liq","erros","erros_gg","%ERRO","%ERRO_GG"]
+# denom bruta ou líquida
+den = base["liq"] if denom_mode.startswith("Líquida") else base["vist"]
+base["%ERRO"]    = np.where(den > 0, (base["erros"]    / den) * 100, np.nan).round(1)
+base["%ERRO_GG"] = np.where(den > 0, (base["erros_gg"] / den) * 100, np.nan).round(1)
+
+# colunas de farol
+base["FAROL_%ERRO"]    = base["%ERRO"].apply(lambda v: _farol(v, META_ERRO))
+base["FAROL_%ERRO_GG"] = base["%ERRO_GG"].apply(lambda v: _farol(v, META_ERRO_GG))
+
+# formatação para exibição
 fmt = base.copy()
 for c in ["vist","rev","liq","erros","erros_gg"]:
-    if c in fmt.columns: fmt[c] = fmt[c].map(lambda x: int(x))
-for c in ["%ERRO","%ERRO_GG"]:
-    if c in fmt.columns: fmt[c] = fmt[c].map(lambda x: ("—" if pd.isna(x) else f"{x:.1f}%".replace(".", ",")))
-st.dataframe(fmt[show_cols], use_container_width=True, hide_index=True)
+    if c in fmt.columns:
+        fmt[c] = pd.to_numeric(fmt[c], errors="coerce").fillna(0).astype(int)
 
+fmt["%ERRO"]    = fmt["%ERRO"].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ","))
+fmt["%ERRO_GG"] = fmt["%ERRO_GG"].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%".replace(".", ","))
+
+# ordem de colunas (farol ao lado de cada métrica)
+cols_view = [
+    "VISTORIADOR","vist","rev","liq",
+    "erros","erros_gg",
+    "FAROL_%ERRO","%ERRO",
+    "FAROL_%ERRO_GG","%ERRO_GG",
+]
+
+# largura compacta para as colunas de farol
+st.dataframe(
+    fmt[cols_view],
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "FAROL_%ERRO":    st.column_config.TextColumn(" ", help="Farol %ERRO", width="small"),
+        "FAROL_%ERRO_GG": st.column_config.TextColumn("  ", help="Farol %ERRO_GG", width="small"),
+    },
+)
+
+with st.expander("Legenda do farol", expanded=False):
+    st.write(f"🟢 Dentro da meta · %ERRO ≤ {META_ERRO:.1f}% · %ERRO_GG ≤ {META_ERRO_GG:.1f}%")
+    st.write(f"🟡 Até {TOL_AMARELO:.1f} pp acima da meta")
+    st.write("🔴 Acima da meta + tolerância")
 
 # ------------------ TENDÊNCIA DE ERROS (projeção) ------------------
 st.markdown("---")
@@ -1360,5 +1410,6 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
