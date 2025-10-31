@@ -1014,11 +1014,10 @@ st.markdown('<div class="section">📐 % de erro por vistoriador</div>', unsafe_
 denom_mode = st.session_state.get("denom_mode_global", "Bruta (recomendado)")
 
 # Metas e tolerância
-META_ERRO     = 3.5    # % de erros totais
-META_ERRO_GG  = 1.5    # % de erros graves/gravíssimos
-TOL_AMARELO   = 0.5    # até +0,5 pp acima da meta = amarelo
+META_ERRO     = 3.5
+META_ERRO_GG  = 1.5
+TOL_AMARELO   = 0.5
 
-# Função farol
 def _farol(pct, meta, tol=TOL_AMARELO):
     if pd.isna(pct): return "—"
     diff = pct - meta
@@ -1040,10 +1039,8 @@ def _make_prod(df_prod):
     out["liq"] = out["vist"] - out["rev"]
     return out
 
-# 1) produção no recorte atual
 prod = _make_prod(viewP)
 
-# 2) fallback: mês inteiro
 if prod["vist"].sum() == 0:
     if not dfP.empty:
         s_p_dates_all = pd.to_datetime(dfP["__DATA__"], errors="coerce").dt.date
@@ -1057,7 +1054,6 @@ if prod["vist"].sum() == 0:
         if prod["vist"].sum() > 0:
             fallback_note = "Usando produção do mês (fallback), pois não houve produção no período selecionado."
 
-# 3) fallback: global
 if prod["vist"].sum() == 0 and not dfP.empty:
     prod = _make_prod(dfP.copy())
     fallback_note = "Usando produção global (fallback), pois não há produção no mês/período selecionado."
@@ -1093,9 +1089,8 @@ def _fmt_val_pct(pct, emoji):
 fmt["%ERRO"]    = fmt.apply(lambda r: _fmt_val_pct(r["%ERRO"],    r["FAROL_%ERRO"]), axis=1)
 fmt["%ERRO_GG"] = fmt.apply(lambda r: _fmt_val_pct(r["%ERRO_GG"], r["FAROL_%ERRO_GG"]), axis=1)
 
-# Ordena pelo maior %ERRO numérico
-base_sorted = base.sort_values("%ERRO", ascending=False).reset_index(drop=True)
-fmt_sorted = fmt.set_index(base.index).loc[base_sorted.index].reset_index(drop=True)
+# Ordenação decrescente pelo valor numérico real (%ERRO)
+fmt_sorted = fmt.sort_values(by="%ERRO", key=lambda col: base.loc[col.index, "%ERRO"], ascending=False)
 
 cols_view = ["VISTORIADOR","vist","rev","liq","erros","erros_gg","%ERRO","%ERRO_GG"]
 
@@ -1435,6 +1430,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
