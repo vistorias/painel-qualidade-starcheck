@@ -1099,6 +1099,72 @@ st.dataframe(
     use_container_width=True,
     hide_index=True,
 )
+# ------------------ EXPORTAR EXCEL COM FAROL DE CORES ------------------
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import PatternFill, Alignment
+    ok_openpyxl = True
+except Exception:
+    ok_openpyxl = False
+
+if not ok_openpyxl:
+    st.warning("openpyxl não disponível — exportação colorida desativada.")
+else:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Erros por Vistoriador"
+
+    # Cabeçalho
+    headers = ["VISTORIADOR","vist","rev","liq","erros","erros_gg","%ERRO","%ERRO_GG"]
+    ws.append(headers)
+
+    # Linhas (usamos o DataFrame já ordenado e com farol calculado)
+    for _, r in fmt_sorted.iterrows():
+        ws.append([
+            r["VISTORIADOR"],
+            int(r["vist"]), int(r["rev"]), int(r["liq"]),
+            int(r["erros"]), int(r["erros_gg"]),
+            r["%ERRO"], r["%ERRO_GG"]
+        ])
+
+    # Função para pintar células conforme o farol
+    def _fill_from_farol(emoji: str) -> PatternFill:
+        if isinstance(emoji, str) and "🟢" in emoji:
+            return PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")  # verde
+        if isinstance(emoji, str) and "🟡" in emoji:
+            return PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")  # amarelo
+        if isinstance(emoji, str) and "🔴" in emoji:
+            return PatternFill(start_color="F4CCCC", end_color="F4CCCC", fill_type="solid")  # vermelho
+        return PatternFill(fill_type=None)
+
+    # Aplicar cores nas colunas %ERRO (G) e %ERRO_GG (H)
+    # Começa na linha 2 (linha 1 é o cabeçalho)
+    for i, (_, r) in enumerate(fmt_sorted.iterrows(), start=2):
+        fill_total = _fill_from_farol(r.get("FAROL_%ERRO"))
+        fill_gg    = _fill_from_farol(r.get("FAROL_%ERRO_GG"))
+
+        ws[f"G{i}"].fill = fill_total
+        ws[f"H{i}"].fill = fill_gg
+
+        ws[f"G{i}"].alignment = Alignment(horizontal="center")
+        ws[f"H{i}"].alignment = Alignment(horizontal="center")
+
+    # Largura das colunas
+    widths = {"A":28, "B":10, "C":10, "D":10, "E":10, "F":10, "G":12, "H":12}
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
+
+    # Salvar em memória e criar botão
+    xbuf = io.BytesIO()
+    wb.save(xbuf)
+    xbuf.seek(0)
+
+    st.download_button(
+        label="📥 Baixar Excel com farol de cores",
+        data=xbuf,
+        file_name="erros_por_vistoriador.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 # ------------------ LEGENDA ------------------
 with st.expander("Legenda do farol", expanded=False):
@@ -1430,6 +1496,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
