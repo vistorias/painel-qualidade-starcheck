@@ -1080,7 +1080,7 @@ base["%ERRO_GG"] = ((base["erros_gg"] / den) * 100).round(1)
 base["FAROL_%ERRO"]    = base["%ERRO"].apply(lambda v: _farol(v, META_ERRO))
 base["FAROL_%ERRO_GG"] = base["%ERRO_GG"].apply(lambda v: _farol(v, META_ERRO_GG))
 
-# ------------------ FORMATAÇÃO ------------------
+# ------------------ FORMATAÇÃO E ORDENAÇÃO ------------------
 fmt = base.copy()
 for c in ["vist","rev","liq","erros","erros_gg"]:
     fmt[c] = pd.to_numeric(fmt[c], errors="coerce").fillna(0).astype(int)
@@ -1093,10 +1093,14 @@ def _fmt_val_pct(pct, emoji):
 fmt["%ERRO"]    = fmt.apply(lambda r: _fmt_val_pct(r["%ERRO"],    r["FAROL_%ERRO"]), axis=1)
 fmt["%ERRO_GG"] = fmt.apply(lambda r: _fmt_val_pct(r["%ERRO_GG"], r["FAROL_%ERRO_GG"]), axis=1)
 
+# Ordena pelo maior %ERRO numérico
+base_sorted = base.sort_values("%ERRO", ascending=False).reset_index(drop=True)
+fmt_sorted = fmt.set_index(base.index).loc[base_sorted.index].reset_index(drop=True)
+
 cols_view = ["VISTORIADOR","vist","rev","liq","erros","erros_gg","%ERRO","%ERRO_GG"]
 
 st.dataframe(
-    fmt[cols_view],
+    fmt_sorted[cols_view],
     use_container_width=True,
     hide_index=True,
 )
@@ -1431,6 +1435,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
