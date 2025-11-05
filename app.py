@@ -703,11 +703,18 @@ def bar_with_labels(df, x_col, y_col, x_title="", y_title="QTD", height=320):
 c1, c2 = st.columns(2)
 
 if "UNIDADE" in viewQ.columns:
-    with c1:
-        st.markdown('<div class="section">🏙️ Erros por unidade</div>', unsafe_allow_html=True)
+   with c1:
+    st.markdown('<div class="section">🏙️ Erros por unidade</div>', unsafe_allow_html=True)
+
+    # duas colunas: TOTAL (à esquerda) e GG (à direita)
+    g_tot, g_gg = st.columns(2)
+
+    # ---------- TOTAL de erros por unidade (o que você já tinha) ----------
+    with g_tot:
         by_city = (
             viewQ.groupby("UNIDADE", dropna=False)["ERRO"].size().reset_index(name="QTD")
         )
+
         if not viewP.empty and "UNIDADE" in viewP.columns:
             prod_city = (
                 viewP.groupby("UNIDADE", dropna=False)["IS_REV"].size().reset_index(name="VIST")
@@ -757,8 +764,74 @@ if "UNIDADE" in viewQ.columns:
             )
         )
         chart = alt.layer(bars, bar_labels, line, line_labels).resolve_scale(y="independent").properties(height=340)
+        st.subheader("Total")
         st.altair_chart(chart, use_container_width=True)
 
+    # ---------- Somente GRAVE + GRAVÍSSIMO por unidade ----------
+    with g_gg:
+        mask_gg = viewQ["GRAVIDADE"].astype(str).str.upper().isin(grav_gg) if "GRAVIDADE" in viewQ.columns else pd.Series(False, index=viewQ.index)
+        viewQ_gg = viewQ[mask_gg]
+
+        by_city_gg = (
+            viewQ_gg.groupby("UNIDADE", dropna=False)["ERRO"].size().reset_index(name="QTD_GG")
+        )
+
+        # produção por unidade para o denominador
+        if not viewP.empty and "UNIDADE" in viewP.columns:
+            prod_city = (
+                viewP.groupby("UNIDADE", dropna=False)["IS_REV"].size().reset_index(name="VIST")
+            )
+        else:
+            prod_city = pd.DataFrame(columns=["UNIDADE", "VIST"])
+
+        by_city_gg = by_city_gg.merge(prod_city, on="UNIDADE", how="left").fillna({"VIST": 0})
+
+        # %ERRO_GG = GG / vistorias; se não houver produção, usa % do total de GG
+        by_city_gg["%ERRO_GG"] = np.where(by_city_gg["VIST"] > 0,
+                                          (by_city_gg["QTD_GG"] / by_city_gg["VIST"]) * 100, np.nan)
+        if by_city_gg["%ERRO_GG"].isna().all():
+            total_gg_global = by_city_gg["QTD_GG"].sum()
+            by_city_gg["%ERRO_GG"] = np.where(total_gg_global > 0,
+                                              (by_city_gg["QTD_GG"] / total_gg_global) * 100, np.nan)
+            y2_title_gg = "% dos erros GG"
+        else:
+            y2_title_gg = "% de erro GG (GG/vistorias)"
+
+        by_city_gg["PCT_GG"] = by_city_gg["%ERRO_GG"] / 100.0
+        by_city_gg = by_city_gg.sort_values("QTD_GG", ascending=False).reset_index(drop=True)
+        order_gg = by_city_gg["UNIDADE"].tolist()
+
+        bars_gg = (
+            alt.Chart(by_city_gg).mark_bar().encode(
+                x=alt.X("UNIDADE:N", sort=order_gg, axis=alt.Axis(labelAngle=0, labelLimit=180), title="UNIDADE"),
+                y=alt.Y("QTD_GG:Q", title="QTD (GG)"),
+                tooltip=["UNIDADE", "QTD_GG", alt.Tooltip("PCT_GG:Q", format=".1%", title=y2_title_gg)],
+            )
+        )
+        bar_labels_gg = (
+            alt.Chart(by_city_gg).mark_text(dy=-6).encode(
+                x=alt.X("UNIDADE:N", sort=order_gg),
+                y="QTD_GG:Q",
+                text=alt.Text("QTD_GG:Q", format=".0f"),
+            )
+        )
+        line_gg = (
+            alt.Chart(by_city_gg).mark_line(point=True, color="#b02300").encode(
+                x=alt.X("UNIDADE:N", sort=order_gg),
+                y=alt.Y("PCT_GG:Q", axis=alt.Axis(title=y2_title_gg, format=".1%")),
+            )
+        )
+        line_labels_gg = (
+            alt.Chart(by_city_gg).mark_text(color="#b02300", dy=-8, fontWeight="bold").encode(
+                x=alt.X("UNIDADE:N", sort=order_gg),
+                y="PCT_GG:Q",
+                text=alt.Text("PCT_GG:Q", format=".1%"),
+            )
+        )
+        chart_gg = alt.layer(bars_gg, bar_labels_gg, line_gg, line_labels_gg).resolve_scale(y="independent").properties(height=340)
+        st.subheader("Grave + Gravíssimo")
+        st.altair_chart(chart_gg, use_container_width=True)
+        
 if "GRAVIDADE" in viewQ.columns:
     with c2:
         st.markdown('<div class="section">🧲 Erros por gravidade</div>', unsafe_allow_html=True)
@@ -1496,6 +1569,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
