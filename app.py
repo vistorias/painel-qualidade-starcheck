@@ -906,12 +906,15 @@ if not fast_mode:
                 st.info("Sem categorias suficientes para montar o Pareto.")
             else:
                 top_default = min(10, max_cats)
-                top_cats = st.slider(
-                    "Categorias no Pareto",
-                    min_value=1, max_value=max_cats, value=top_default,
-                    step=1, key=f"pareto_cats_{ref_year}{ref_month}",
-                )
-
+                if max_cats <= 1:
+    top_cats = 1
+    st.caption(f"**Categorias no Pareto:** {top_cats} (única categoria disponível)")
+else:
+    top_cats = st.slider(
+        "Categorias no Pareto",
+        min_value=1, max_value=max_cats, value=min(10, max_cats),
+        step=1, key=f"pareto_cats_{ref_year}{ref_month}",
+    )
                 pareto = (
                     viewQ.groupby("ERRO", sort=False)["ERRO"]
                     .size()
@@ -1569,6 +1572,7 @@ else:
     df_fraude = df_fraude[cols_fraude].sort_values(["DATA","UNIDADE","VISTORIADOR"])
     st.dataframe(df_fraude, use_container_width=True, hide_index=True)
     st.caption('<div class="table-note">* Somente linhas cujo **ERRO** é exatamente “TENTATIVA DE FRAUDE”.</div>', unsafe_allow_html=True)
+
 
 
 
